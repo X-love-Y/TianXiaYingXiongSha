@@ -1,0 +1,1592 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>对局 - 天下英雄杀</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #070a12;
+      --panel: rgba(12, 17, 29, 0.9);
+      --panel-soft: rgba(18, 24, 38, 0.84);
+      --line: rgba(218, 227, 246, 0.18);
+      --line-bright: rgba(232, 235, 245, 0.42);
+      --text: #f3f5f8;
+      --muted: #aab3c5;
+      --gold: #d9b76d;
+      --gold-light: #f2d390;
+      --red: #bd554b;
+      --red-light: #ee8476;
+      --blue: #6f9daf;
+      --green: #7ba898;
+      --card-width: 112px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-width: 1000px; min-height: 100%; }
+    body {
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--text);
+      background: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    button { font: inherit; color: inherit; }
+    button:focus-visible { outline: 2px solid var(--gold-light); outline-offset: 3px; }
+
+    .scene {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background: url("imlobby.png") center / cover no-repeat;
+      transform: scale(1.02);
+    }
+    .scene::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(4, 7, 14, .78), rgba(4, 7, 14, .28) 50%, rgba(4, 7, 14, .72)),
+        linear-gradient(0deg, rgba(3, 5, 11, .86), rgba(3, 5, 11, .22) 62%, rgba(3, 5, 11, .76));
+    }
+
+    .game-shell {
+      width: min(1420px, calc(100% - 56px));
+      min-height: 100vh;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      padding: 20px 0 18px;
+    }
+    .topbar, .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+    .topbar {
+      min-height: 52px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand {
+      color: var(--gold-light);
+      font-family: SimSun, STSong, serif;
+      font-size: 23px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .match-meta { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+    .match-meta strong { color: var(--gold-light); font-family: Consolas, monospace; letter-spacing: 1px; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 11px rgba(123, 168, 152, .8); }
+    .turn-pill { padding: 5px 10px; border: 1px solid rgba(217, 183, 109, .42); color: var(--gold-light); background: rgba(217, 183, 109, .08); border-radius: 3px; }
+
+    .main { display: grid; align-content: center; padding: 20px 0 16px; }
+    .notice {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 12px;
+      padding: 8px 18px;
+      color: #e7ebf2;
+      font-size: 13px;
+      background: rgba(8, 12, 21, .72);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      transition: background 180ms ease, border-color 180ms ease;
+    }
+    .notice.attention { border-color: rgba(238, 132, 118, .64); background: rgba(105, 32, 27, .45); }
+
+    .board {
+      position: relative;
+      min-height: 790px;
+      isolation: isolate;
+    }
+    .player-panel, .table {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .38);
+      backdrop-filter: blur(10px);
+    }
+    .player-panel {
+      position: relative;
+      display: grid;
+      gap: 11px;
+      align-content: start;
+      min-height: 166px;
+      padding: 16px;
+      overflow: hidden;
+    }
+    .player-panel.active { border-color: rgba(217, 183, 109, .72); box-shadow: 0 0 0 1px rgba(217, 183, 109, .12), 0 20px 60px rgba(0, 0, 0, .42); }
+    .player-panel.active::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--gold); }
+    .player-panel.eliminated { opacity: .52; filter: grayscale(.42); }
+    .seat-panel { position: absolute; z-index: 2; width: 238px; min-height: 166px; }
+    .seat-top-left { top: 0; left: 0; }
+    .seat-top-right { top: 0; right: 0; }
+    .seat-bottom-right { right: 0; bottom: 0; }
+    .seat-bottom-left { left: 0; bottom: 0; }
+    .player-panel.targeted { border-color: rgba(238,132,118,.86); box-shadow: 0 0 0 2px rgba(238,132,118,.2), 0 20px 60px rgba(0,0,0,.48); }
+    .player-heading { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    .avatar {
+      flex: 0 0 44px;
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      color: var(--gold-light);
+      font-family: SimSun, serif;
+      font-size: 22px;
+      border: 1px solid rgba(217, 183, 109, .48);
+      background: linear-gradient(150deg, rgba(176, 52, 39, .7), rgba(34, 25, 20, .92));
+      border-radius: 50%;
+    }
+    .player-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+    .hero-name { margin-top: 3px; color: var(--gold); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .player-status { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .player-status.active { color: var(--gold-light); }
+    .hp-row { display: flex; align-items: center; gap: 5px; }
+    .hp-label { margin-right: 4px; color: var(--muted); font-size: 11px; }
+    .hp { width: 16px; height: 7px; border: 1px solid rgba(226, 114, 100, .72); background: rgba(180, 49, 39, .84); transform: skewX(-22deg); }
+    .hp.empty { border-color: rgba(200, 207, 221, .2); background: rgba(200, 207, 221, .08); }
+    .panel-stats { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+    .panel-stats strong { color: #e4e9f2; font-weight: 700; }
+    .panel-description { min-height: 31px; color: #8d97aa; font-size: 11px; line-height: 1.45; }
+    .weapon-slot {
+      min-height: 34px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      column-gap: 8px;
+      padding: 6px 8px;
+      border: 1px solid rgba(217, 183, 109, .2);
+      background: rgba(217, 183, 109, .06);
+      color: #8793a7;
+      font-size: 11px;
+    }
+    .weapon-slot.equipped { border-color: rgba(217, 183, 109, .56); background: rgba(120, 82, 35, .22); color: #f2d390; }
+    .weapon-slot-label { color: #aeb8c9; }
+    .weapon-slot strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-weight: 700; }
+    .weapon-effect { grid-column: 1 / -1; color: #aeb8c9; line-height: 1.35; }
+    .weapon-unequip { min-width: 42px; min-height: 24px; padding: 3px 7px; border: 1px solid rgba(238,132,118,.48); border-radius: 3px; cursor: pointer; color: #f3c3ba; background: rgba(109,38,34,.5); font-size: 11px; }
+    .weapon-unequip:hover:not(:disabled) { border-color: var(--red-light); background: rgba(145,50,43,.72); }
+    .weapon-unequip:disabled { cursor: not-allowed; opacity: .42; }
+
+    .table {
+      position: absolute;
+      z-index: 1;
+      inset: 82px 262px 300px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+      min-height: 360px;
+      padding: 20px;
+      background:
+        radial-gradient(ellipse at center, rgba(41, 91, 81, .25), transparent 62%),
+        linear-gradient(160deg, rgba(28, 71, 63, .58), rgba(9, 25, 29, .72) 70%),
+        var(--panel);
+      border-color: rgba(129, 170, 160, .28);
+    }
+    .table::before { content: ""; position: absolute; inset: 14px; border: 1px solid rgba(149, 195, 176, .14); pointer-events: none; }
+    .table.card-played { animation: table-pulse 440ms ease; }
+    @keyframes table-pulse { 0% { box-shadow: 0 18px 50px rgba(0,0,0,.38); } 45% { box-shadow: 0 0 0 3px rgba(238,132,118,.26), 0 22px 70px rgba(175,49,39,.32); } 100% { box-shadow: 0 18px 50px rgba(0,0,0,.38); } }
+    .table-top { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+    .table-top strong { color: #d4e0d8; font-weight: 700; }
+    .table-center { position: relative; z-index: 1; display: grid; place-items: center; align-content: center; gap: 18px; }
+    .stacks { display: flex; align-items: center; justify-content: center; gap: 54px; }
+    .stack { display: grid; justify-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+    .stack-card { width: 82px; height: 112px; display: grid; place-items: center; border: 1px solid rgba(218, 227, 246, .32); border-radius: 5px; box-shadow: 7px 8px 0 rgba(0,0,0,.16), 4px 5px 0 rgba(218,227,246,.16); background: repeating-linear-gradient(135deg, rgba(217,183,109,.14), rgba(217,183,109,.14) 4px, rgba(18,31,40,.08) 4px, rgba(18,31,40,.08) 8px), #172b30; color: rgba(242, 211, 144, .82); font-family: SimSun, serif; font-size: 27px; }
+    .discard-card { width: 82px; height: 112px; display: grid; place-items: center; border: 1px solid rgba(238, 132, 118, .42); border-radius: 5px; background: rgba(81, 35, 35, .48); color: var(--red-light); font-size: 16px; }
+    .discard-card.empty { color: #677286; border-color: var(--line); background: rgba(12,17,28,.42); }
+    .center-status { max-width: 480px; min-height: 38px; color: #dbe6e1; text-align: center; font-size: 14px; line-height: 1.55; }
+    .event-log { position: relative; z-index: 1; height: 102px; overflow: auto; padding: 11px 13px; border: 1px solid rgba(218, 227, 246, .14); background: rgba(3, 8, 13, .32); color: #98a6a8; font-size: 11px; line-height: 1.65; }
+    .event-log p + p { margin-top: 2px; }
+    .event-log p:first-child { color: #d6e1dc; }
+
+    .hand-zone { position: absolute; z-index: 3; left: 262px; right: 262px; bottom: 0; display: grid; grid-template-rows: auto 143px auto auto; gap: 10px; height: 332px; min-height: 332px; padding: 13px 16px 15px; overflow: visible; background: var(--panel-soft); border: 1px solid var(--line); border-radius: 5px; }
+    .hand-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+    .hand-header strong { color: #e5e9ef; }
+    .hand { --hand-size: 1; --hand-overlap: 42px; min-width: 0; width: 100%; height: 143px; display: grid; grid-template-columns: repeat(var(--hand-size), minmax(0, 1fr)); align-items: end; padding: 4px 12px 0; overflow: visible; }
+    .hand.drawing { position: relative; pointer-events: none; opacity: .78; }
+    .hand.drawing::after { content: "摸牌中 · 2 秒"; position: absolute; left: 50%; top: 50%; z-index: 2; padding: 6px 12px; color: var(--gold-light); background: rgba(8,12,20,.86); border: 1px solid rgba(217,183,109,.48); border-radius: 3px; transform: translate(-50%, -50%); animation: draw-pulse 900ms ease-in-out infinite alternate; }
+    .hand.drawing .card { animation: card-deal 1.8s ease both; }
+    @keyframes draw-pulse { from { opacity: .58; } to { opacity: 1; } }
+    @keyframes card-deal { from { opacity: 0; transform: translateY(-28px) rotate(-2deg) scale(.9); } 65% { opacity: 1; transform: translateY(4px) rotate(1deg) scale(1.01); } to { opacity: 1; transform: translateY(0) rotate(0) scale(1); } }
+    .card {
+      position: relative;
+      width: min(var(--card-width), calc(100% + var(--hand-overlap)));
+      height: 137px;
+      min-width: 0;
+      justify-self: start;
+      z-index: 1;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 6px;
+      padding: 11px 10px 9px;
+      border: 1px solid rgba(226, 232, 243, .3);
+      border-radius: 5px;
+      cursor: pointer;
+      text-align: left;
+      transform: translateY(0);
+      transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+      animation: card-in 260ms ease both;
+    }
+    .card:hover:not(:disabled) { z-index: 5; transform: translateY(-8px); border-color: var(--gold); box-shadow: 0 10px 22px rgba(0,0,0,.34); }
+    .card.selected { z-index: 7; transform: translateY(-18px); border-color: var(--gold-light); box-shadow: 0 0 0 2px rgba(217,183,109,.2), 0 14px 26px rgba(0,0,0,.4); }
+    .card:last-child { justify-self: end; width: min(var(--card-width), 100%); }
+    .card:disabled { cursor: default; }
+    .card.kill { background: linear-gradient(165deg, rgba(104, 33, 35, .95), rgba(35, 18, 26, .95)); }
+    .card.dodge { background: linear-gradient(165deg, rgba(35, 74, 94, .95), rgba(17, 30, 49, .96)); }
+    .card.heal { background: linear-gradient(165deg, rgba(42, 92, 72, .96), rgba(17, 44, 38, .96)); }
+    .card.silence { background: linear-gradient(165deg, rgba(83, 66, 111, .95), rgba(27, 22, 45, .96)); }
+    .card.untargetable { background: linear-gradient(165deg, rgba(36, 92, 93, .95), rgba(14, 38, 45, .96)); }
+    .card.divine-punish { background: linear-gradient(165deg, rgba(132, 83, 38, .96), rgba(58, 26, 19, .96)); }
+    .card.weapon { background: linear-gradient(165deg, rgba(116, 83, 37, .96), rgba(47, 28, 19, .96)); }
+    .card.discard-selected { filter: saturate(.65); border-color: var(--red-light); box-shadow: 0 0 0 2px rgba(238,132,118,.18); }
+    .card-type { color: rgba(255,255,255,.65); font-size: 10px; letter-spacing: 1px; }
+    .card-mark { align-self: center; color: rgba(255, 230, 191, .9); font-family: SimSun, serif; font-size: 30px; text-align: center; }
+    .card.dodge .card-mark { color: #acd3e1; }
+    .card.heal .card-mark { color: #b8e5c7; }
+    .card.silence .card-mark { color: #d6c5ff; }
+    .card.untargetable .card-mark { color: #b6f0ee; }
+    .card.divine-punish .card-mark { color: #ffd0a0; }
+    .card.weapon .card-mark { color: #f4d38c; }
+    .card-count { color: rgba(255,255,255,.54); font-family: Consolas, monospace; font-size: 10px; text-align: right; }
+    .card-effect { max-height: 30px; overflow: hidden; color: rgba(255,238,205,.72); font-size: 10px; line-height: 1.35; text-align: center; }
+    .card.weapon .card-mark { align-self: end; font-size: 25px; }
+    @keyframes card-in { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+    .controls { position: relative; z-index: 4; display: flex; flex-wrap: wrap; align-items: center; align-content: center; justify-content: center; gap: 7px; width: 100%; min-width: 0; min-height: 48px; }
+    .control-button { min-width: 100px; min-height: 42px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; white-space: nowrap; background: rgba(233, 239, 248, .08); transition: background 160ms ease, border-color 160ms ease, transform 160ms ease, opacity 160ms ease; }
+    .control-button:hover:not(:disabled) { transform: translateY(-2px); background: rgba(233,239,248,.15); border-color: var(--line-bright); }
+    .control-button.primary { border-color: rgba(217,183,109,.58); background: rgba(156, 58, 49, .72); }
+    .control-button.primary:hover:not(:disabled) { background: rgba(183, 67, 56, .9); }
+    .control-button.warn { border-color: rgba(238,132,118,.62); background: rgba(109,38,34,.72); }
+    .control-button:disabled { cursor: not-allowed; opacity: .4; }
+    .helper { min-height: 18px; color: var(--muted); font-size: 12px; text-align: center; }
+
+    .target-button { width: 100%; min-height: 30px; padding: 5px 8px; border: 1px solid rgba(238,132,118,.45); border-radius: 3px; cursor: pointer; color: #f0c0b8; background: rgba(109,38,34,.42); font-size: 11px; transition: background 160ms ease, border-color 160ms ease; }
+    .target-button:hover { border-color: var(--red-light); background: rgba(145,50,43,.68); }
+    .target-button.selected { color: #fff2d4; border-color: var(--gold-light); background: rgba(156,58,49,.76); }
+    .panel-hand { display: flex; align-items: center; gap: 4px; min-height: 18px; color: var(--muted); font-size: 11px; }
+    .mini-back { width: 13px; height: 17px; border: 1px solid rgba(217,183,109,.42); border-radius: 2px; background: repeating-linear-gradient(135deg, rgba(217,183,109,.18), rgba(217,183,109,.18) 2px, rgba(23,43,48,.28) 2px, rgba(23,43,48,.28) 4px); }
+    .response-panel { position: fixed; left: 50%; top: 50%; z-index: 9; width: min(520px, calc(100% - 48px)); display: grid; gap: 12px; padding: 18px 20px; transform: translate(-50%, calc(-50% + 18px)); opacity: 0; pointer-events: none; background: rgba(12, 16, 27, .98); border: 1px solid rgba(238,132,118,.7); border-radius: 5px; box-shadow: 0 20px 70px rgba(0,0,0,.6); transition: opacity 180ms ease, transform 180ms ease; }
+    .response-panel.visible { transform: translate(-50%, -50%); opacity: 1; pointer-events: auto; }
+    .response-title { color: #f2c5bc; font-size: 14px; font-weight: 700; }
+    .response-copy { color: var(--muted); font-size: 12px; }
+    .response-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+    .turn-dialog { width: min(440px, calc(100% - 48px)); margin: auto; color: var(--text); background: transparent; border: 0; }
+    .turn-dialog::backdrop { background: rgba(2,4,9,.66); backdrop-filter: blur(2px); }
+    .turn-dialog-card { display: grid; gap: 12px; padding: 24px; background: rgba(11,16,28,.98); border: 1px solid rgba(217,183,109,.54); border-radius: 5px; box-shadow: 0 24px 80px rgba(0,0,0,.64); }
+    .turn-dialog h2 { color: var(--gold-light); font-family: SimSun, serif; font-size: 22px; }
+    .turn-dialog p { color: var(--muted); font-size: 13px; line-height: 1.65; }
+    .turn-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+    .card-guide-list { display: grid; gap: 9px; }
+    .card-guide-item { padding: 11px 12px; border: 1px solid var(--line); background: rgba(4, 9, 16, .36); }
+    .card-guide-item strong { display: block; margin-bottom: 4px; color: #e8edf4; font-size: 13px; }
+    .card-guide-item p { font-size: 12px; }
+    .guide-mark { display: inline-grid; width: 24px; height: 24px; margin-right: 7px; place-items: center; vertical-align: middle; color: #fff0db; border: 1px solid rgba(255,255,255,.26); border-radius: 3px; font-family: SimSun, serif; }
+    .guide-mark.kill { background: rgba(111, 35, 38, .84); }
+    .guide-mark.dodge { background: rgba(35, 74, 94, .84); }
+    .guide-mark.heal { background: rgba(42, 92, 72, .84); }
+
+    .victory { position: fixed; inset: 0; z-index: 12; display: grid; place-items: center; padding: 24px; background: rgba(2, 4, 9, .76); opacity: 0; pointer-events: none; transition: opacity 240ms ease; }
+    .victory.visible { opacity: 1; pointer-events: auto; }
+    .victory-card { width: min(460px, 100%); padding: 36px 34px 30px; text-align: center; background: rgba(11, 16, 28, .98); border: 1px solid rgba(217,183,109,.58); border-radius: 5px; box-shadow: 0 28px 90px rgba(0,0,0,.65); }
+    .victory-kicker { color: var(--gold); font-size: 12px; letter-spacing: 2px; }
+    .victory h1 { margin-top: 10px; color: var(--gold-light); font-family: SimSun, serif; font-size: 34px; }
+    .victory p { margin: 12px 0 24px; color: var(--muted); font-size: 13px; }
+
+    .footer { padding-top: 12px; color: #727d91; font-size: 11px; }
+    .footer span:last-child { color: #a4acbb; }
+
+    @media (max-width: 1120px) {
+      :root { --card-width: 96px; }
+      .game-shell { width: min(1020px, calc(100% - 32px)); }
+      .board { min-height: 760px; }
+      .seat-panel { width: 198px; }
+      .table { inset: 74px 214px 290px; }
+      .hand-zone { left: 214px; right: 214px; }
+      .hand { --hand-overlap: 34px; }
+      .card { height: 126px; padding: 9px 8px 8px; }
+      .card-mark { font-size: 26px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <div class="scene" aria-hidden="true"></div>
+  <div class="game-shell">
+    <header class="topbar">
+      <div class="brand">天下英雄杀 · 简易对局</div>
+      <div class="match-meta">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span>房间</span><strong id="roomCode">------</strong>
+        <span class="turn-pill" id="turnMeta">准备中</span>
+        <span id="timerText">--</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="notice" id="notice">正在载入对局状态…</div>
+      <section class="board" aria-label="卡牌对局桌面">
+        <article class="player-panel seat-panel seat-top-left" id="seat0"></article>
+        <article class="player-panel seat-panel seat-top-right" id="seat1"></article>
+        <article class="player-panel seat-panel seat-bottom-right" id="seat2"></article>
+        <article class="player-panel seat-panel seat-bottom-left" id="seat3"></article>
+        <section class="table" id="table" aria-label="中央牌桌">
+          <div class="table-top"><span id="roundText">第 1 回合</span><strong id="phaseText">出牌阶段</strong></div>
+          <div class="table-center">
+            <div class="stacks">
+              <div class="stack"><div class="stack-card">牌<br>堆</div><span id="deckCount">90 张</span></div>
+              <div class="stack"><div class="discard-card empty" id="discardTop">空</div><span id="discardCount">弃牌 0</span></div>
+            </div>
+            <p class="center-status" id="centerStatus">等待对局开始</p>
+          </div>
+          <div class="event-log" id="eventLog" aria-live="polite"></div>
+        </section>
+        <section class="hand-zone" aria-label="我的手牌">
+          <div class="hand-header"><span><strong id="handTitle">我的手牌</strong> · 点击选择牌</span><span id="handCount">0 / 5</span></div>
+          <div class="hand" id="hand"></div>
+          <div class="controls">
+            <button class="control-button primary" id="useCard" type="button">使用</button>
+            <button class="control-button" id="endTurn" type="button">过 / 结束回合</button>
+            <button class="control-button warn" id="discardSelected" type="button">弃置所选</button>
+            <button class="control-button" id="clearSelection" type="button">清除选择</button>
+            <button class="control-button" id="cardGuide" type="button">查看牌详情</button>
+          </div>
+          <p class="helper" id="helperText">选择一张手牌后点击“使用”；「杀」需要先选择目标。</p>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer"><span>本地原型 · 技能配置已经服务端校验</span><span>基础牌 60 张 · 状态牌 20 张 · 装备牌 10 张</span></footer>
+  </div>
+
+  <section class="response-panel" id="responsePanel" aria-live="assertive">
+    <div class="response-title" id="responseTitle">受到「杀」的响应</div>
+    <div class="response-copy" id="responseCopy">你可以打出一张闪来抵消这次攻击。</div>
+    <div class="response-actions"><button class="control-button" id="takeDamage" type="button">不出闪，承受伤害</button><button class="control-button primary" id="respondDodge" type="button">打出闪</button></div>
+  </section>
+
+  <dialog class="turn-dialog" id="turnDialog">
+    <div class="turn-dialog-card">
+      <h2>确认结束当前回合？</h2>
+      <p id="turnDialogCopy">你可以返回继续出牌，确认后才会进入下一回合。</p>
+      <div class="turn-dialog-actions">
+        <button class="control-button" id="cancelTurnEnd" type="button">返回继续出牌</button>
+        <button class="control-button" id="discardThenPass" type="button">弃牌后过</button>
+        <button class="control-button primary" id="directPass" type="button">直接过</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="turn-dialog" id="cardGuideDialog">
+    <div class="turn-dialog-card">
+      <h2>基础牌作用</h2>
+      <div class="card-guide-list">
+        <section class="card-guide-item"><strong><span class="guide-mark kill">杀</span>杀</strong><p>仅能在自己的出牌阶段使用。先选择一名存活对手，再点击“使用”；每回合限用一次。目标可打出“闪”规避，否则失去 1 点生命。</p></section>
+        <section class="card-guide-item"><strong><span class="guide-mark dodge">闪</span>闪</strong><p>当自己成为“杀”的目标时使用，可抵消这次伤害。不能在普通出牌阶段主动使用。</p></section>
+        <section class="card-guide-item"><strong><span class="guide-mark heal">奶</span>奶</strong><p>自己的出牌阶段、生命未满时可使用，通常恢复 1 点生命。若生命归零进入濒死状态，手中有奶时即使不是自己的回合也可立即使用自救。</p></section>
+        <section class="card-guide-item"><strong>沉默</strong><p>出牌阶段指定其他存活玩家；目标的下一个出牌阶段不能主动使用手牌和主动技能，回合结束后移除。</p></section>
+        <section class="card-guide-item"><strong>无法选中</strong><p>自己成为指向性卡牌目标时使用，取消本次目标。不能抵消天罚、规则弃牌或不指定目标的全体效果。</p></section>
+        <section class="card-guide-item"><strong>天罚</strong><p>摸到后立即公开触发，自己失去 1 点生命并弃置；这不是伤害，不能被闪或减伤影响。</p></section>
+        <section class="card-guide-item"><strong>装备牌</strong><p>自己的出牌阶段可装备或卸下。所有装备共用一个武器槽；装备新武器时，旧武器会回到手牌，主动卸下的武器也会回到手牌。</p></section>
+        <section class="card-guide-item"><strong>武器效果</strong><p>连射弩箭：本回合使用杀没有次数限制。硬弓：使用杀时可以指定任意一名存活玩家。轩辕剑：杀造成伤害时忽略目标装备免伤。奇盾：每回合第一次受到杀的伤害减 1。爆炸弩：杀可额外选择与原目标相邻的一名玩家。奇门遁甲：每回合一次转移即将受到的伤害。吸血刀：造成伤害后恢复等量血量，击杀时恢复至上限。天赦令：免疫术卡和系统特技。妙手：每回合第一次造成伤害后随机获得目标一张手牌。锦囊：摸牌阶段额外摸 2 张。</p></section>
+        <section class="card-guide-item"><strong>手牌与弃牌</strong><p>结束回合时可以选择“弃牌后过”，批量选择任意手牌弃置；基础手牌上限为 5 张，部分英雄技能会提高上限。直接过会由系统随机弃掉超额手牌。</p></section>
+      </div>
+      <div class="turn-dialog-actions"><button class="control-button primary" id="closeCardGuide" type="button">关闭</button></div>
+    </div>
+  </dialog>
+
+  <section class="victory" id="victory" aria-modal="true" role="dialog">
+    <div class="victory-card"><div class="victory-kicker">MATCH COMPLETE</div><h1 id="victoryTitle">对局结束</h1><p id="victoryCopy"></p><button class="control-button primary" id="backLobby" type="button">返回大厅</button></div>
+  </section>
+  <audio id="buttonSound" src="按钮声音.mp3" preload="auto"></audio>
+  <script src="network.js"></script>
+
+  <script>
+    const roomStorageKey = 'heroKillLocalRooms';
+    const sessionStorageKey = 'heroKillRoomSession';
+    const TURN_MS = 60 * 1000;
+    const RESPONSE_MS = 15 * 1000;
+    const DRAW_MS = 2 * 1000;
+    const MAX_HAND = 5;
+    const MAX_HP = 2;
+    const GAME_VERSION = 8;
+    let roomSession = null;
+    let gameState = null;
+    let roomData = null;
+    let currentPlayer = null;
+    let selectedCardUid = null;
+    let selectedTargetId = null;
+    let selectedSecondaryTargetId = null;
+    let selectedDiscardUids = new Set();
+    let tickTimer = null;
+    let botTimer = null;
+
+    try { roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey)); } catch { roomSession = null; }
+
+    const $ = (id) => document.getElementById(id);
+    const ui = {
+      roomCode: $('roomCode'), turnMeta: $('turnMeta'), timerText: $('timerText'), notice: $('notice'),
+      seats: [$('seat0'), $('seat1'), $('seat2'), $('seat3')], roundText: $('roundText'), phaseText: $('phaseText'),
+      centerStatus: $('centerStatus'), deckCount: $('deckCount'), discardTop: $('discardTop'), discardCount: $('discardCount'),
+      eventLog: $('eventLog'), hand: $('hand'), handCount: $('handCount'), handTitle: $('handTitle'), helperText: $('helperText'),
+      useCard: $('useCard'), endTurn: $('endTurn'), discardSelected: $('discardSelected'), clearSelection: $('clearSelection'),
+      cardGuide: $('cardGuide'), cardGuideDialog: $('cardGuideDialog'), closeCardGuide: $('closeCardGuide'),
+      responsePanel: $('responsePanel'), responseTitle: $('responseTitle'), responseCopy: $('responseCopy'),
+      takeDamage: $('takeDamage'), respondDodge: $('respondDodge'), victory: $('victory'), victoryTitle: $('victoryTitle'), table: document.querySelector('.table'),
+      victoryCopy: $('victoryCopy'), backLobby: $('backLobby'), sound: $('buttonSound'), turnDialog: $('turnDialog'),
+      turnDialogCopy: $('turnDialogCopy'), cancelTurnEnd: $('cancelTurnEnd'), discardThenPass: $('discardThenPass'), directPass: $('directPass')
+    };
+
+    function getRooms() {
+      try { return JSON.parse(localStorage.getItem(roomStorageKey)) || {}; } catch { return {}; }
+    }
+    function roomHasReadyHeroes(room) {
+      return room?.heroGeneration?.status === 'READY'
+        && Boolean(room?.players?.length)
+        && room.players.every((player) => room.generatedHeroes?.[player.id]);
+    }
+    function saveRooms(rooms) {
+      if (window.HeroKillNet) return window.HeroKillNet.saveRooms(rooms, { playerId: roomSession?.playerId });
+      localStorage.setItem(roomStorageKey, JSON.stringify(rooms));
+      return Promise.resolve(rooms);
+    }
+    function playSound() { ui.sound.currentTime = 0; ui.sound.play().catch(() => {}); }
+    function safe(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+    function shuffle(cards) {
+      for (let index = cards.length - 1; index > 0; index -= 1) {
+        const swapIndex = Math.floor(Math.random() * (index + 1));
+        [cards[index], cards[swapIndex]] = [cards[swapIndex], cards[index]];
+      }
+      return cards;
+    }
+    const WEAPON_CARDS = [
+      { weaponId: 'rapid-crossbow', name: '连射弩箭', effect: '本回合使用杀没有次数限制。' },
+      { weaponId: 'hard-bow', name: '硬弓', effect: '使用杀时可以指定任意一名存活玩家。' },
+      { weaponId: 'xuanyuan-sword', name: '轩辕剑', effect: '杀造成伤害时忽略目标装备提供的免伤效果。' },
+      { weaponId: '奇盾', name: '奇盾', effect: '每回合第一次受到杀的伤害减 1，最低减至 0。' },
+      { weaponId: 'explosive-crossbow', name: '爆炸弩', effect: '使用杀时可额外选择与原目标相邻的一名玩家。' },
+      { weaponId: 'qimen-dunjia', name: '奇门遁甲', effect: '每回合一次，将即将受到的伤害转移给自己的一个相邻玩家。' },
+      { weaponId: 'vampire-blade', name: '吸血刀', effect: '对其他玩家造成伤害后恢复等量血量；直接造成击杀时恢复至上限。' },
+      { weaponId: 'tian-she-order', name: '天赦令', effect: '自己不受术卡和系统特技影响，但不免疫基础牌和装备。' },
+      { weaponId: 'miao-shou', name: '妙手', effect: '每回合第一次对其他玩家造成伤害后，随机获得其一张手牌。' },
+      { weaponId: 'jin-nang', name: '锦囊', effect: '自己摸牌阶段额外摸 2 张牌。' }
+    ];
+    const weaponByName = Object.fromEntries(WEAPON_CARDS.map((weapon) => [weapon.name, weapon]));
+    const weaponById = Object.fromEntries(WEAPON_CARDS.map((weapon) => [weapon.weaponId, weapon]));
+    function weaponEffectFor(card) {
+      return card?.effect || weaponById[card?.weaponId]?.effect || weaponByName[card?.name]?.effect || '';
+    }
+    function weaponTitleFor(card) {
+      const effect = weaponEffectFor(card);
+      return `${card?.name || '未装备'}${effect ? `：${effect}` : ''}`;
+    }
+    function hasWeapon(player, name) { return player?.weapon?.name === name; }
+    function weaponUsageFor(player) {
+      return player.weaponUsage || (player.weaponUsage = {});
+    }
+    function alivePlayersInSeatOrder() {
+      return gameState.players.filter((player) => player.alive);
+    }
+    function adjacentPlayersOf(player) {
+      const alive = alivePlayersInSeatOrder();
+      const index = alive.findIndex((item) => item.id === player?.id);
+      if (index < 0 || alive.length < 2) return [];
+      return [alive[(index + alive.length - 1) % alive.length], alive[(index + 1) % alive.length]]
+        .filter((item, itemIndex, list) => item && item.id !== player.id && list.findIndex((candidate) => candidate.id === item.id) === itemIndex);
+    }
+    function areAdjacent(firstId, secondId) {
+      return adjacentPlayersOf(gameState.players.find((player) => player.id === firstId)).some((player) => player.id === secondId);
+    }
+    function buildDeck() {
+      const deck = [];
+      for (let index = 0; index < 30; index += 1) deck.push({ uid: `kill-${index + 1}`, type: 'kill', name: '杀' });
+      for (let index = 0; index < 20; index += 1) deck.push({ uid: `dodge-${index + 1}`, type: 'dodge', name: '闪' });
+      for (let index = 0; index < 10; index += 1) deck.push({ uid: `heal-${index + 1}`, type: 'heal', name: '奶' });
+      for (let index = 0; index < 5; index += 1) deck.push({ uid: `silence-${index + 1}`, type: 'silence', name: '沉默' });
+      for (let index = 0; index < 5; index += 1) deck.push({ uid: `untargetable-${index + 1}`, type: 'untargetable', name: '无法选中' });
+      for (let index = 0; index < 10; index += 1) deck.push({ uid: `divine-punish-${index + 1}`, type: 'divine-punish', name: '天罚' });
+      WEAPON_CARDS.forEach((weapon) => deck.push({ uid: `weapon-${weapon.weaponId}`, type: 'weapon', weaponId: weapon.weaponId, name: weapon.name, effect: weapon.effect }));
+      return shuffle(deck);
+    }
+    function activateSilenceIfNeeded(player) {
+      if (!player || gameState?.phase !== 'PLAY' || player.id !== gameState.currentPlayerId) return false;
+      const effects = player.statusEffects || (player.statusEffects = {});
+      if (!effects.silencePendingTurns || effects.silenceActive) return false;
+      effects.silencePendingTurns -= 1;
+      effects.silenceActive = true;
+      effects.silenceAppliedRound = gameState.round;
+      addLog(`${player.nickname} 进入沉默状态，本出牌阶段不能主动使用手牌或主动技能。`);
+      return true;
+    }
+    function clearSilenceIfNeeded(player) {
+      if (!player?.statusEffects?.silenceActive) return false;
+      player.statusEffects.silenceActive = false;
+      return true;
+    }
+    function beginDying(attacker, target, reason = 'damage') {
+      gameState.pendingAttack = null;
+      gameState.pendingRescue = { attackerId: attacker?.id || null, targetId: target.id, reason };
+      gameState.phase = 'DYING';
+      gameState.responseDeadline = Date.now() + RESPONSE_MS;
+      addLog(`${target.nickname} 进入濒死状态，可使用奶自救。`);
+      persistGame();
+      render();
+    }
+    function loseHp(player, amount, sourceLabel, attacker = null) {
+      player.hp = Math.max(0, player.hp - amount);
+      addLog(`${player.nickname}${sourceLabel ? ` 因${sourceLabel}` : ''}失去 ${amount} 点生命，剩余 ${player.hp} 点生命。`);
+      if (player.hp <= 0) {
+        if (player.hand.some((card) => card.type === 'heal')) beginDying(attacker, player, sourceLabel || 'lose-hp');
+        else finishDefeat(attacker, player);
+        return true;
+      }
+      return false;
+    }
+    function hasLoveGod(player) {
+      return player.hand.some((card) => card.type === 'love-god' || card.name === '爱神');
+    }
+    function drawCards(game, player, count) {
+      let drawn = 0;
+      while (drawn < count) {
+        if (!game.deck.length && game.discardPile.length) game.deck = shuffle(game.discardPile.splice(0));
+        if (!game.deck.length) break;
+        const card = game.deck.pop();
+        drawn += 1;
+        if (card.type === 'divine-punish') {
+          game.discardPile.push(card);
+          addLog(`${player.nickname} 摸到「天罚」，立即公开并触发。`);
+          if (hasLoveGod(player)) {
+            addLog(`${player.nickname} 手中持有爱神，免疫本次天罚。`);
+          } else if (loseHp(player, 1, '天罚')) {
+            return drawn;
+          }
+        } else {
+          player.hand.push(card);
+        }
+      }
+      return drawn;
+    }
+    function getGeneratedHero(room, playerId) {
+      return room.generatedHeroes?.[playerId] || null;
+    }
+    function hasSkill(player, templateId) {
+      return [player?.hero?.primarySkill, player?.hero?.secondarySkill]
+        .some((skill) => skill?.templateId === templateId);
+    }
+    function getSkill(player, templateId) {
+      return [player?.hero?.primarySkill, player?.hero?.secondarySkill]
+        .find((skill) => skill?.templateId === templateId) || null;
+    }
+    function getSkillName(player, templateId, fallback) {
+      return getSkill(player, templateId)?.name || fallback;
+    }
+    function handLimitFor(player) {
+      return MAX_HAND + (player?.hero?.handLimitBonus || 0);
+    }
+    function healAmountFor(player) {
+      return 1 + (getSkill(player, 'HEAL_PLUS')?.value || 0);
+    }
+    function isSilenced(player) {
+      return Boolean(player?.statusEffects?.silenceActive);
+    }
+    function canUseSlash(player) {
+      if (isSilenced(player)) return false;
+      return !gameState?.killUsed || hasSkill(player, 'UNLIMITED_SLASH') || hasWeapon(player, '连射弩箭');
+    }
+    function canUseDodgeAsHeal(player) {
+      return hasSkill(player, 'DODGE_AS_HEAL')
+        && !isSilenced(player)
+        && player.hp < player.maxHp
+        && player.skillUsage?.dodgeAsHealRound !== gameState?.round;
+    }
+    function drawCountFor(player) {
+      return 2 + (getSkill(player, 'EXTRA_DRAW')?.value || 0) + (hasWeapon(player, '锦囊') ? 2 : 0);
+    }
+    function makePlayer(roomPlayer, isDemo = false) {
+      const hero = getGeneratedHero(roomData, roomPlayer.id);
+      const maxHp = MAX_HP + (hero?.maxHpBonus || 0);
+      return {
+        id: roomPlayer.id,
+        nickname: roomPlayer.nickname || (isDemo ? '演示对手' : '玩家'),
+        heroName: hero?.heroName || (isDemo ? '无名对手' : '待定英雄'),
+        heroDescription: hero?.flavorText || hero?.description || '',
+        hero,
+        hp: maxHp,
+        maxHp,
+        damageDealt: 0,
+        hand: [],
+        skillUsage: {},
+        statusEffects: {},
+        weapon: null,
+        weaponUsage: {},
+        alive: true,
+        isDemo
+      };
+    }
+    function createGame(room) {
+      const roomPlayers = room.players || [];
+      const matchStartedAt = Date.now();
+      const matchDuration = room.mode === 'timed' && Number(room.duration) > 0 ? Number(room.duration) * 60 * 1000 : null;
+      const first = roomPlayers[0] || { id: `${room.roomCode}-local`, nickname: '玩家一' };
+      const second = roomPlayers[1] || { id: `${room.roomCode}-demo`, nickname: '演示对手' };
+      const matchPlayers = roomPlayers.length >= 2 ? roomPlayers.slice(0, 4) : [first, second];
+      const game = {
+        version: GAME_VERSION,
+        status: 'PLAYING',
+        matchStartedAt,
+        matchDeadline: matchDuration ? matchStartedAt + matchDuration : null,
+        phase: 'DRAWING',
+        round: 1,
+        currentPlayerId: first.id,
+        turnStartedAt: Date.now(),
+        responseDeadline: null,
+        turnDeadline: Date.now() + DRAW_MS + TURN_MS,
+        drawDeadline: Date.now() + DRAW_MS,
+        drawPlayerId: null,
+        drawCount: 2,
+        killUsed: false,
+        pendingAttack: null,
+        pendingRescue: null,
+        winnerId: null,
+        deck: buildDeck(),
+        discardPile: [],
+        actionLog: [],
+        players: matchPlayers.map((roomPlayer, index) => makePlayer(roomPlayer, index >= roomPlayers.length))
+      };
+      gameState = game;
+      game.players.forEach((player) => {
+        let safety = 0;
+        while (player.hand.length < 5 && game.deck.length && game.phase !== 'DYING' && game.status === 'PLAYING' && safety < 80) {
+          const before = player.hand.length;
+          drawCards(game, player, 5 - player.hand.length);
+          safety += 1;
+          if (player.hand.length === before && !game.deck.length) break;
+        }
+      });
+      game.currentPlayerId = game.players[Math.floor(Math.random() * game.players.length)].id;
+      const active = game.players.find((player) => player.id === game.currentPlayerId);
+      const openingDrawCount = drawCountFor(active);
+      drawCards(game, active, openingDrawCount);
+      game.drawPlayerId = active.id;
+      game.drawCount = openingDrawCount;
+      game.actionLog.unshift(`对局开始，${active.nickname} 随机先手，正在摸 ${openingDrawCount} 张牌。`);
+      return game;
+    }
+    function reconcileGamePlayers(room) {
+      if (!gameState || gameState.status !== 'PLAYING' || gameState.round !== 1 || gameState.actionLog.length > 1) return;
+      const actual = room.players || [];
+      if (actual.length < 2 || !gameState.players.some((player) => player.isDemo)) return;
+      const demo = gameState.players.find((player) => player.isDemo);
+      const real = actual.find((player) => player.id !== gameState.players[0].id) || actual[1];
+      if (!demo || !real) return;
+      const replacement = makePlayer(real);
+      replacement.hand = demo.hand;
+      replacement.hp = demo.hp;
+      gameState.players = gameState.players.map((player) => player.id === demo.id ? replacement : player);
+      if (gameState.currentPlayerId === demo.id) gameState.currentPlayerId = replacement.id;
+      if (gameState.pendingAttack?.targetId === demo.id) gameState.pendingAttack.targetId = replacement.id;
+      gameState.actionLog.unshift(`${replacement.nickname} 已加入本局，对手席位已同步。`);
+      persistGame();
+    }
+    function refreshPlayerHeroes(room) {
+      gameState.players.forEach((player) => {
+        player.statusEffects = player.statusEffects || {};
+        player.weaponUsage = player.weaponUsage || {};
+        if (player.weapon === undefined) player.weapon = null;
+        const hero = getGeneratedHero(room, player.id);
+        if (hero) {
+          player.hero = hero;
+          player.heroName = hero.heroName || player.heroName;
+          player.heroDescription = hero.flavorText || hero.description || player.heroDescription;
+          player.skillUsage = player.skillUsage || {};
+        }
+      });
+    }
+    function loadOrCreateGame() {
+      roomData = getRooms()[roomSession.roomCode];
+      if (!roomData) return 'missing';
+      const hasCurrentGame = roomData.game?.version === GAME_VERSION;
+      const creatorId = roomData.players?.find((player) => player.role === 'host')?.id || roomData.players?.[0]?.id;
+      if (!hasCurrentGame && creatorId && roomSession.playerId !== creatorId) return 'waiting';
+      gameState = hasCurrentGame ? roomData.game : createGame(roomData);
+      let needsPersist = !hasCurrentGame;
+      if (gameState.matchDeadline === undefined) {
+        gameState.matchStartedAt = gameState.matchStartedAt || roomData.startedAt || Date.now();
+        gameState.matchDeadline = roomData.mode === 'timed' && Number(roomData.duration) > 0
+          ? gameState.matchStartedAt + Number(roomData.duration) * 60 * 1000
+          : null;
+        needsPersist = true;
+      }
+      reconcileGamePlayers(roomData);
+      refreshPlayerHeroes(roomData);
+      if (needsPersist) persistGame();
+      currentPlayer = gameState.players.find((player) => player.id === roomSession.playerId) || gameState.players[0];
+      return 'ready';
+    }
+    function persistGame() {
+      const rooms = getRooms();
+      const room = rooms[roomSession.roomCode];
+      if (!room) return;
+      room.game = gameState;
+      room.phase = gameState.status === 'ENDED' ? 'ENDED' : 'PLAYING';
+      saveRooms(rooms);
+      roomData = room;
+    }
+    function current() { return gameState?.players.find((player) => player.id === gameState.currentPlayerId); }
+    function opponentOf(player) { return gameState?.players.find((item) => item.id !== player.id && item.alive); }
+    function hasTurn(player = currentPlayer) { return !!player && player.id === gameState.currentPlayerId; }
+    function addLog(message) {
+      gameState.actionLog.unshift(message);
+      gameState.actionLog = gameState.actionLog.slice(0, 16);
+    }
+    function formatRemaining(ms) { return `${Math.max(0, Math.ceil(ms / 1000))}s`; }
+    function renderPlayerPanel(player, own, targetable = false) {
+      if (!player) return '<div class="panel-description">空座位 · 等待玩家加入</div>';
+      const hp = Array.from({ length: player.maxHp }, (_, index) => `<span class="hp${index >= player.hp ? ' empty' : ''}"></span>`).join('');
+      const active = player.id === gameState.currentPlayerId && gameState.status === 'PLAYING';
+      const backs = Array.from({ length: Math.min(player.hand.length, 8) }, () => '<span class="mini-back" aria-hidden="true"></span>').join('');
+      const isPrimaryTarget = selectedTargetId === player.id;
+      const isSecondaryTarget = selectedSecondaryTargetId === player.id;
+      const targetButton = targetable ? `<button class="target-button${isPrimaryTarget || isSecondaryTarget ? ' selected' : ''}" type="button" data-target-id="${player.id}">${isSecondaryTarget ? '爆炸弩副目标 · 再点取消' : isPrimaryTarget ? '已选择 · 再点取消' : '选择为攻击目标'}</button>` : '';
+      const skills = [player.hero?.primarySkill, player.hero?.secondarySkill].filter(Boolean);
+      const skillDetails = skills.map((skill, index) => `${index ? '副' : '主'}·${skill.name}：${skill.description}`).join('；');
+      const silenceText = player.statusEffects?.silenceActive ? '<br>沉默中' : '';
+      const weaponEffect = weaponEffectFor(player.weapon);
+      const canUnequipWeapon = own && player.weapon && player.alive && hasTurn() && gameState.phase === 'PLAY' && !isSilenced(player);
+      const unequipButton = own && player.weapon ? `<button class="weapon-unequip" type="button" data-unequip-weapon="1" title="${canUnequipWeapon ? '卸下当前武器并放回手牌' : '只能在自己的出牌阶段卸下'}" ${canUnequipWeapon ? '' : 'disabled'}>卸下</button>` : '';
+      const weaponSlot = `<div class="weapon-slot${player.weapon ? ' equipped' : ''}" title="${safe(player.weapon ? weaponTitleFor(player.weapon) : '未装备')}"><span class="weapon-slot-label">武器</span><strong>${safe(player.weapon?.name || '未装备')}</strong>${unequipButton}${weaponEffect ? `<span class="weapon-effect">${safe(weaponEffect)}</span>` : ''}</div>`;
+      return `
+        <div class="player-heading"><div class="avatar">${safe(player.nickname.slice(0, 1))}</div><div><div class="player-name">${safe(player.nickname)}</div><div class="hero-name">${safe(player.heroName)}</div></div><span class="player-status${active ? ' active' : ''}">${player.alive ? (active ? '行动中' : '等待') : '已出局'}</span></div>
+        <div class="hp-row"><span class="hp-label">生命</span>${hp}</div>
+        <div class="panel-stats"><span>手牌 <strong>${player.hand.length}</strong></span><span>${own ? '你的席位' : (player.isDemo ? '演示玩家' : '对手席位')}</span></div>
+        ${weaponSlot}
+        <div class="panel-hand"><span>手牌</span>${backs || '<span>无</span>'}</div>
+        <p class="panel-description" title="${safe(skillDetails)}">${safe(player.hero?.title || player.heroDescription || '待定称号')}${silenceText}<br>${safe(skillDetails || '无技能')}</p>${targetButton}`;
+    }
+    function renderCard(card, index, ownTurn, canRespond, canRescue, discardMode) {
+      const selected = discardMode ? selectedDiscardUids.has(card.uid) : selectedCardUid === card.uid;
+      const silenced = isSilenced(currentPlayer);
+      const playableInTurn = card.type === 'kill'
+        ? canUseSlash(currentPlayer)
+        : card.type === 'heal'
+          ? !silenced && currentPlayer.hp < currentPlayer.maxHp
+          : card.type === 'dodge'
+            ? !silenced && canUseDodgeAsHeal(currentPlayer)
+            : card.type === 'silence'
+              ? !silenced
+              : card.type === 'weapon' && !silenced;
+      const enabled = discardMode
+        ? true
+        : (canRespond
+          ? card.type === 'dodge' || card.type === 'untargetable'
+          : canRescue
+            ? card.type === 'heal'
+            : ownTurn && gameState.phase === 'PLAY' && playableInTurn);
+      const labelMap = { kill: '攻击牌', heal: '恢复牌', dodge: '响应牌', silence: '控制牌', untargetable: '反制牌', 'divine-punish': '天罚牌', weapon: '装备牌' };
+      const label = labelMap[card.type] || '卡牌';
+      const effect = card.type === 'weapon' ? weaponEffectFor(card) : '';
+      const title = effect ? `${card.name} · ${label}：${effect}` : `${card.name} · ${label}`;
+      const ariaLabel = effect ? `${card.name}，${label}，${effect}` : `${card.name}，${label}`;
+      return `<button type="button" class="card ${card.type}${selected ? ' selected' : ''}${discardMode && selected ? ' discard-selected' : ''}" data-card-uid="${card.uid}" title="${safe(title)}" aria-label="${safe(ariaLabel)}" ${enabled ? '' : 'disabled'} style="animation-delay:${Math.min(index, 8) * 24}ms"><span class="card-type">${label}</span><span class="card-mark">${safe(card.name)}</span>${effect ? `<span class="card-effect">${safe(effect)}</span>` : ''}<span class="card-count">${String(index + 1).padStart(2, '0')}</span></button>`;
+    }
+    function render() {
+      if (!gameState || !currentPlayer) return;
+      const active = current();
+      const matchWinners = (gameState.winnerIds || (gameState.winnerId ? [gameState.winnerId] : []))
+        .map((id) => gameState.players.find((player) => player.id === id))
+        .filter(Boolean);
+      activateSilenceIfNeeded(active);
+      if (ui.turnDialog.open && !(hasTurn() && gameState.phase === 'PLAY')) ui.turnDialog.close();
+      const opponents = gameState.players.filter((player) => player.id !== currentPlayer.id);
+      const arrangedPlayers = [opponents[1] || null, opponents[0] || null, currentPlayer, opponents[2] || null];
+      ui.roomCode.textContent = roomSession.roomCode;
+      ui.turnMeta.textContent = gameState.status === 'ENDED' ? '对局结束' : `第 ${gameState.round} 回合 · ${active?.nickname || '—'}`;
+      ui.roundText.textContent = `第 ${gameState.round} 回合`;
+      ui.phaseText.textContent = gameState.status === 'ENDED' ? '结算阶段' : gameState.phase === 'DRAWING' ? '摸牌阶段' : gameState.phase === 'RESPONSE' ? '响应阶段' : gameState.phase === 'DISCARD' ? '弃牌阶段' : '出牌阶段';
+      if (gameState.phase === 'DYING') ui.phaseText.textContent = '濒死阶段';
+      ui.seats.forEach((seat, index) => {
+        const player = arrangedPlayers[index];
+        const selectedKill = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'kill');
+        const selectedSilence = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'silence');
+        const hardBowTargetable = selectedKill && hasWeapon(currentPlayer, '硬弓');
+        const adjacentKillTargetable = selectedKill && areAdjacent(currentPlayer.id, player?.id);
+        const explosionSecondary = selectedKill && hasWeapon(currentPlayer, '爆炸弩') && selectedTargetId && !selectedSecondaryTargetId && player?.id !== selectedTargetId && areAdjacent(selectedTargetId, player.id);
+        const targetable = Boolean(player && player.id !== currentPlayer.id && player.alive && hasTurn() && gameState.phase === 'PLAY' && ((selectedSilence && !isSilenced(currentPlayer)) || (selectedKill && canUseSlash(currentPlayer) && ((hardBowTargetable || adjacentKillTargetable || player.id === selectedTargetId || explosionSecondary) && (!selectedTargetId || player.id === selectedTargetId || explosionSecondary)))));
+        seat.innerHTML = renderPlayerPanel(player, player?.id === currentPlayer.id, targetable);
+        seat.classList.toggle('active', player?.id === gameState.currentPlayerId);
+        seat.classList.toggle('targeted', player?.id === selectedTargetId);
+        seat.classList.toggle('eliminated', Boolean(player && !player.alive));
+      });
+      ui.deckCount.textContent = `${gameState.deck.length} 张`;
+      ui.discardCount.textContent = `弃牌 ${gameState.discardPile.length}`;
+      const top = gameState.discardPile[gameState.discardPile.length - 1];
+      ui.discardTop.textContent = top ? top.name : '空';
+      ui.discardTop.classList.toggle('empty', !top);
+      ui.eventLog.innerHTML = gameState.actionLog.map((line) => `<p>${safe(line)}</p>`).join('');
+      ui.centerStatus.textContent = gameState.status === 'ENDED'
+        ? (matchWinners.length > 1 ? `${matchWinners.map((player) => player.nickname).join('、')} 并列获胜` : matchWinners.length === 1 ? `${matchWinners[0].nickname} 获胜` : '对局结束')
+        : gameState.phase === 'DRAWING' ? `${safe(gameState.players.find((player) => player.id === gameState.drawPlayerId)?.nickname || '玩家')} 正在摸牌…` : gameState.pendingAttack ? `${safe(gameState.players.find((player) => player.id === gameState.pendingAttack.attackerId)?.nickname || '')} 对 ${safe(gameState.players.find((player) => player.id === gameState.pendingAttack.targetId)?.nickname || '')} 使用了杀` : hasTurn() ? '轮到你行动' : `等待 ${safe(active?.nickname || '对手')} 行动`;
+      if (gameState.phase === 'DYING') {
+        const dyingPlayer = gameState.players.find((player) => player.id === gameState.pendingRescue?.targetId);
+        ui.centerStatus.textContent = `${dyingPlayer?.nickname || '玩家'} 濒死，等待使用奶自救。`;
+      }
+      ui.handTitle.textContent = `${currentPlayer.nickname} 的手牌`;
+      const currentHandLimit = handLimitFor(currentPlayer);
+      ui.handCount.textContent = `${currentPlayer.hand.length} / ${currentHandLimit}`;
+      ui.hand.classList.toggle('drawing', gameState.phase === 'DRAWING' && gameState.drawPlayerId === currentPlayer.id);
+      const discardMode = gameState.phase === 'DISCARD' && hasTurn();
+      const requiredDiscardCount = Math.max(0, currentPlayer.hand.length - currentHandLimit);
+      const canRespond = gameState.phase === 'RESPONSE' && gameState.pendingAttack?.targetId === currentPlayer.id;
+      const canRescue = gameState.phase === 'DYING' && gameState.pendingRescue?.targetId === currentPlayer.id;
+      ui.hand.style.setProperty('--hand-size', Math.max(1, currentPlayer.hand.length));
+      ui.hand.innerHTML = currentPlayer.hand.map((card, index) => renderCard(card, index, hasTurn(), canRespond, canRescue, discardMode)).join('');
+      const selectedKill = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'kill');
+      const selectedHeal = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'heal');
+      const selectedDodge = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'dodge');
+      const selectedSilence = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'silence');
+      const selectedUntargetable = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'untargetable');
+      const selectedWeapon = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'weapon');
+      const selectedKillReady = hasTurn() && gameState.phase === 'PLAY' && canUseSlash(currentPlayer) && selectedKill && selectedTargetId && gameState.players.some((player) => player.id === selectedTargetId && player.alive && (hasWeapon(currentPlayer, '硬弓') || areAdjacent(currentPlayer.id, player.id)));
+      const selectedHealReady = hasTurn() && gameState.phase === 'PLAY' && selectedHeal && !isSilenced(currentPlayer) && currentPlayer.hp < currentPlayer.maxHp;
+      const selectedDodgeHealReady = hasTurn() && gameState.phase === 'PLAY' && selectedDodge && canUseDodgeAsHeal(currentPlayer);
+      const selectedSilenceReady = hasTurn() && gameState.phase === 'PLAY' && selectedSilence && !isSilenced(currentPlayer) && selectedTargetId && selectedTargetId !== currentPlayer.id && gameState.players.some((player) => player.id === selectedTargetId && player.alive);
+      const selectedUntargetableReady = canRespond && selectedUntargetable;
+      const selectedWeaponReady = hasTurn() && gameState.phase === 'PLAY' && selectedWeapon && !isSilenced(currentPlayer);
+      const selectedRescueReady = canRescue && selectedHeal;
+      ui.useCard.disabled = !(selectedKillReady || selectedHealReady || selectedDodgeHealReady || selectedSilenceReady || selectedUntargetableReady || selectedWeaponReady || selectedRescueReady);
+      ui.endTurn.textContent = discardMode ? '直接过（自动处理）' : '过 / 结束回合';
+      ui.endTurn.disabled = !(hasTurn() && (gameState.phase === 'PLAY' || gameState.phase === 'DISCARD'));
+      ui.discardSelected.textContent = discardMode ? `弃置所选 (${selectedDiscardUids.size} 张)` : '弃置所选';
+      ui.discardSelected.disabled = !(discardMode && selectedDiscardUids.size > 0);
+      ui.clearSelection.disabled = !(selectedCardUid || selectedTargetId || selectedDiscardUids.size);
+      ui.helperText.textContent = gameState.status === 'ENDED' ? '本局已经结束。' : gameState.phase === 'DRAWING' ? `${gameState.players.find((player) => player.id === gameState.drawPlayerId)?.nickname || '玩家'} 正在摸牌，请等待动画完成。` : canRespond ? '你被指向，选择一张响应牌或承受本次结算。' : discardMode ? `还需至少弃置 ${requiredDiscardCount} 张；可批量弃牌，也可点击直接过由系统处理超额手牌。` : hasTurn() ? (isSilenced(currentPlayer) ? '你处于沉默状态，本回合不能主动使用手牌或主动技能。' : selectedWeapon ? `已选择装备牌：${weaponEffectFor(currentPlayer.hand.find((card) => card.uid === selectedCardUid)) || '点击使用装备。'}` : selectedHeal ? (selectedHealReady ? `已选择「奶」，点击使用恢复 ${healAmountFor(currentPlayer)} 点生命。` : '当前生命已满，不能使用「奶」。') : selectedSilence ? (selectedSilenceReady ? '已选择「沉默」和目标，点击使用。' : '请选择其他存活玩家作为目标。') : gameState.killUsed ? '本回合已使用杀，仍可使用奶或结束回合。' : selectedKill && selectedTargetId ? (hasWeapon(currentPlayer, '爆炸弩') ? '已选择主目标；可再选择一名相邻玩家作为爆炸弩副目标。' : '已选择「杀」和目标，点击使用生效。') : selectedKill ? '已选择「杀」，请点击对手面板指定目标。' : selectedTargetId ? '已选择目标，请再选择一张「杀」或「沉默」。' : (currentPlayer.weapon ? '可选择一张牌后点击「使用」，也可在自己的武器槽点击「卸下」。' : '可选择一张牌后点击「使用」。')) : '当前不是你的回合。';
+      if (hasTurn() && gameState.phase === 'PLAY' && selectedDodge) {
+        ui.helperText.textContent = selectedDodgeHealReady ? '技能生效：点击使用，将这张「闪」当作「奶」。' : '本回合不能再将「闪」当作「奶」。';
+      } else if (gameState.phase === 'RESPONSE' && selectedUntargetable) {
+        ui.helperText.textContent = selectedUntargetableReady ? '已选择「无法选中」，点击使用可取消本次指向。' : '当前无法使用「无法选中」。';
+      } else if (hasTurn() && gameState.phase === 'PLAY' && gameState.killUsed && hasSkill(currentPlayer, 'UNLIMITED_SLASH')) {
+        ui.helperText.textContent = '技能生效：本回合仍可继续使用「杀」。';
+      }
+      if (canRescue) ui.helperText.textContent = '你已濒死，选择一张「奶」后点击「使用」自救。';
+      ui.notice.textContent = gameState.status === 'ENDED' ? '对局已结算，可以返回大厅。' : gameState.phase === 'DRAWING' ? '摸牌中 · 2 秒后进入出牌阶段' : canRespond ? '请在响应时间内决定是否打出闪。' : hasTurn() ? `你的回合：摸 ${gameState.drawCount || 2} 张牌后行动。` : `等待 ${active?.nickname || '对手'} 完成回合。`;
+      if (canRescue) ui.notice.textContent = `濒死响应：使用奶可恢复 ${healAmountFor(currentPlayer)} 点生命。`;
+      ui.notice.classList.toggle('attention', gameState.phase === 'DRAWING' || canRespond || canRescue || discardMode);
+      ui.responsePanel.classList.toggle('visible', canRespond || canRescue);
+      if (canRescue) {
+        ui.responseTitle.textContent = '你已濒死';
+        ui.responseCopy.textContent = `你有 ${currentPlayer.hand.filter((card) => card.type === 'heal').length} 张奶，可立即使用一张恢复至 1 点生命。`;
+        ui.respondDodge.textContent = '使用奶自救';
+        ui.respondDodge.disabled = !currentPlayer.hand.some((card) => card.type === 'heal');
+        ui.takeDamage.textContent = '放弃救治';
+      } else {
+        ui.respondDodge.textContent = '打出闪';
+        ui.respondDodge.disabled = !currentPlayer.hand.some((card) => card.type === 'dodge');
+        ui.takeDamage.textContent = '不出闪，承受伤害';
+        if (canRespond) { ui.responseTitle.textContent = `${gameState.players.find((player) => player.id === gameState.pendingAttack.attackerId)?.nickname || '对手'} 对你使用了「杀」`; ui.responseCopy.textContent = `你有 ${currentPlayer.hand.filter((card) => card.type === 'dodge').length} 张闪，打出后可抵消伤害。`; }
+      }
+      ui.victory.classList.toggle('visible', gameState.status === 'ENDED');
+      if (gameState.status === 'ENDED') {
+        const isWinner = matchWinners.some((player) => player.id === currentPlayer.id);
+        ui.victoryTitle.textContent = matchWinners.length > 1 ? '并列获胜' : matchWinners.length === 1 ? `${matchWinners[0].nickname} 获胜` : '对局结束';
+        ui.victoryCopy.textContent = gameState.endReason === 'TIME'
+          ? `${isWinner ? '你进入了胜者名单。' : '你未进入胜者名单。'} ${matchWinners.map((player) => player.nickname).join('、') || '无人'} 按定时结算规则获胜。`
+          : isWinner ? '你成为最后存活的玩家，赢得本局对局。' : currentPlayer.alive ? '本局没有产生唯一胜者。' : '你已出局，本局对局结束。';
+      }
+      bindHand();
+    }
+    function bindHand() {
+      ui.hand.querySelectorAll('[data-card-uid]').forEach((button) => button.addEventListener('click', () => {
+        const uid = button.dataset.cardUid;
+        if (gameState.phase === 'DISCARD' && hasTurn()) {
+          if (selectedDiscardUids.has(uid)) selectedDiscardUids.delete(uid); else selectedDiscardUids.add(uid);
+        } else if (gameState.phase === 'RESPONSE' && gameState.pendingAttack?.targetId === currentPlayer.id) {
+          selectedCardUid = uid;
+        } else if (gameState.phase === 'DYING' && gameState.pendingRescue?.targetId === currentPlayer.id) {
+          selectedCardUid = uid;
+        } else if (hasTurn() && gameState.phase === 'PLAY') {
+          selectedCardUid = uid;
+        }
+        playSound(); render();
+      }));
+      ui.seats.forEach((seat) => seat.querySelectorAll('[data-target-id]').forEach((button) => button.addEventListener('click', () => {
+        const selected = currentPlayer.hand.find((card) => card.uid === selectedCardUid);
+        if (!hasTurn() || gameState.phase !== 'PLAY' || !['kill', 'silence'].includes(selected?.type)) return;
+        if (selected.type === 'kill' && !canUseSlash(currentPlayer)) return;
+        if (selected.type === 'silence' && isSilenced(currentPlayer)) return;
+        const targetId = button.dataset.targetId;
+        if (selected.type === 'silence') {
+          selectedTargetId = selectedTargetId === targetId ? null : targetId;
+          selectedSecondaryTargetId = null;
+        } else if (selectedSecondaryTargetId === targetId) {
+          selectedSecondaryTargetId = null;
+        } else if (!selectedTargetId) {
+          selectedTargetId = targetId;
+        } else if (selectedTargetId === targetId) {
+          selectedTargetId = null;
+          selectedSecondaryTargetId = null;
+        } else if (hasWeapon(currentPlayer, '爆炸弩') && areAdjacent(selectedTargetId, targetId)) {
+          selectedSecondaryTargetId = targetId;
+        } else {
+          selectedTargetId = targetId;
+          selectedSecondaryTargetId = null;
+        }
+        playSound(); render();
+      })));
+      ui.seats.forEach((seat) => seat.querySelectorAll('[data-unequip-weapon]').forEach((button) => button.addEventListener('click', () => {
+        if (button.disabled) return;
+        unequipWeapon();
+      })));
+    }
+    function equipWeapon() {
+      if (!hasTurn() || gameState.phase !== 'PLAY' || isSilenced(currentPlayer)) return;
+      const card = currentPlayer.hand.find((item) => item.uid === selectedCardUid && item.type === 'weapon');
+      if (!card) return;
+      currentPlayer.hand = currentPlayer.hand.filter((item) => item.uid !== card.uid);
+      const replacedWeapon = currentPlayer.weapon;
+      if (replacedWeapon) currentPlayer.hand.push(replacedWeapon);
+      currentPlayer.weapon = { ...card };
+      currentPlayer.weaponUsage = {};
+      addLog(replacedWeapon
+        ? `${currentPlayer.nickname} 装备「${card.name}」，原武器「${replacedWeapon.name}」回到手牌。`
+        : `${currentPlayer.nickname} 装备「${card.name}」。`);
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      persistGame();
+      playSound();
+      render();
+    }
+    function unequipWeapon() {
+      if (!hasTurn() || gameState.phase !== 'PLAY' || isSilenced(currentPlayer) || !currentPlayer.weapon) return;
+      const weapon = currentPlayer.weapon;
+      currentPlayer.hand.push(weapon);
+      currentPlayer.weapon = null;
+      currentPlayer.weaponUsage = {};
+      addLog(`${currentPlayer.nickname} 卸下「${weapon.name}」，放回手牌。`);
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      persistGame();
+      playSound();
+      render();
+    }
+    function useSilenceCard() {
+      if (!hasTurn() || gameState.phase !== 'PLAY' || isSilenced(currentPlayer)) return;
+      const card = currentPlayer.hand.find((item) => item.uid === selectedCardUid && item.type === 'silence');
+      const target = gameState.players.find((player) => player.id === selectedTargetId && player.id !== currentPlayer.id && player.alive);
+      if (!card || !target) return;
+      currentPlayer.hand = currentPlayer.hand.filter((item) => item.uid !== card.uid);
+      gameState.discardPile.push(card);
+      target.statusEffects = target.statusEffects || {};
+      target.statusEffects.silencePendingTurns = (target.statusEffects.silencePendingTurns || 0) + 1;
+      addLog(`${currentPlayer.nickname} 打出沉默，令 ${target.nickname} 的下一个出牌阶段无法主动行动。`);
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      ui.table.classList.remove('card-played');
+      void ui.table.offsetWidth;
+      ui.table.classList.add('card-played');
+      setTimeout(() => ui.table.classList.remove('card-played'), 500);
+      persistGame(); playSound(); render();
+    }
+    function useUntargetableCard() {
+      if (gameState.phase !== 'RESPONSE' || gameState.pendingAttack?.targetId !== currentPlayer.id) return;
+      const card = currentPlayer.hand.find((item) => item.uid === selectedCardUid && item.type === 'untargetable');
+      if (!card) return;
+      currentPlayer.hand = currentPlayer.hand.filter((item) => item.uid !== card.uid);
+      gameState.discardPile.push(card);
+      addLog(`${currentPlayer.nickname} 打出无法选中，取消本次目标。`);
+      selectedCardUid = null;
+      resolveAttack(true, false, '无法选中');
+      playSound();
+    }
+    function playKill() {
+      if (!hasTurn() || gameState.phase !== 'PLAY' || !canUseSlash(currentPlayer)) return;
+      const card = currentPlayer.hand.find((item) => item.uid === selectedCardUid && item.type === 'kill');
+      const target = gameState.players.find((player) => player.id === selectedTargetId && player.id !== currentPlayer.id && player.alive);
+      const secondaryTarget = gameState.players.find((player) => player.id === selectedSecondaryTargetId && player.id !== currentPlayer.id && player.id !== target?.id && player.alive);
+      if (!card || !target) return;
+      if (!hasWeapon(currentPlayer, '硬弓') && !areAdjacent(currentPlayer.id, target.id)) return;
+      if (secondaryTarget && (!hasWeapon(currentPlayer, '爆炸弩') || !areAdjacent(target.id, secondaryTarget.id))) return;
+      const targetIds = [target.id, secondaryTarget?.id].filter(Boolean);
+      currentPlayer.hand = currentPlayer.hand.filter((item) => item.uid !== card.uid);
+      gameState.discardPile.push(card);
+      gameState.killUsed = true;
+      gameState.pendingAttack = { attackerId: currentPlayer.id, targetId: targetIds[0], targetIds, resolvedTargetIds: [], cardUid: card.uid };
+      gameState.phase = 'RESPONSE';
+      gameState.responseDeadline = Date.now() + RESPONSE_MS;
+      addLog(`${currentPlayer.nickname} 打出杀，指定 ${targetIds.map((id) => gameState.players.find((player) => player.id === id)?.nickname).filter(Boolean).join('、')} 响应。`);
+      currentPlayer.skillUsage = currentPlayer.skillUsage || {};
+      const slashDraw = getSkill(currentPlayer, 'SLASH_DRAW');
+      if (slashDraw && currentPlayer.skillUsage.slashDrawRound !== gameState.round) {
+        currentPlayer.skillUsage.slashDrawRound = gameState.round;
+        const drawn = drawCards(gameState, currentPlayer, slashDraw.value);
+        addLog(`${currentPlayer.nickname} 发动「${slashDraw.name}」，使用杀后摸 ${drawn} 张牌。`);
+      }
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      ui.table.classList.remove('card-played');
+      void ui.table.offsetWidth;
+      ui.table.classList.add('card-played');
+      setTimeout(() => ui.table.classList.remove('card-played'), 500);
+      if (!target.hand.some((item) => item.type === 'dodge' || item.type === 'untargetable')) {
+        addLog(`${target.nickname} 手中没有闪，直接承受这次伤害。`);
+        resolveAttack(false);
+        playSound();
+        return;
+      }
+      persistGame(); playSound(); render();
+    }
+    function useHealCard() {
+      if (!hasTurn() || gameState.phase !== 'PLAY' || currentPlayer.hp >= currentPlayer.maxHp) return;
+      const card = currentPlayer.hand.find((item) => item.uid === selectedCardUid && item.type === 'heal');
+      if (!card) return;
+      currentPlayer.hand = currentPlayer.hand.filter((item) => item.uid !== card.uid);
+      gameState.discardPile.push(card);
+      const amount = healAmountFor(currentPlayer);
+      currentPlayer.hp = Math.min(currentPlayer.maxHp, currentPlayer.hp + amount);
+      addLog(`${currentPlayer.nickname} 使用奶，恢复 ${amount} 点生命，当前生命 ${currentPlayer.hp}/${currentPlayer.maxHp}。`);
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      ui.table.classList.remove('card-played');
+      void ui.table.offsetWidth;
+      ui.table.classList.add('card-played');
+      setTimeout(() => ui.table.classList.remove('card-played'), 500);
+      persistGame(); playSound(); render();
+    }
+    function useDodgeAsHeal() {
+      if (!hasTurn() || gameState.phase !== 'PLAY' || !canUseDodgeAsHeal(currentPlayer)) return;
+      const card = currentPlayer.hand.find((item) => item.uid === selectedCardUid && item.type === 'dodge');
+      if (!card) return;
+      currentPlayer.hand = currentPlayer.hand.filter((item) => item.uid !== card.uid);
+      gameState.discardPile.push(card);
+      const amount = healAmountFor(currentPlayer);
+      currentPlayer.hp = Math.min(currentPlayer.maxHp, currentPlayer.hp + amount);
+      currentPlayer.skillUsage = currentPlayer.skillUsage || {};
+      currentPlayer.skillUsage.dodgeAsHealRound = gameState.round;
+      const skill = [currentPlayer.hero?.primarySkill, currentPlayer.hero?.secondarySkill]
+        .find((item) => item?.templateId === 'DODGE_AS_HEAL');
+      addLog(`${currentPlayer.nickname} 发动「${skill?.name || '闪转回春'}」，将闪当作奶，恢复 ${amount} 点生命。`);
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      persistGame(); playSound(); render();
+    }
+    function finishTimedMatch() {
+      if (!gameState || gameState.status === 'ENDED') return;
+      const ranked = [...gameState.players].sort((a, b) => {
+        if (a.alive !== b.alive) return a.alive ? -1 : 1;
+        if (a.hp !== b.hp) return b.hp - a.hp;
+        if (a.hand.length !== b.hand.length) return a.hand.length - b.hand.length;
+        return (b.damageDealt || 0) - (a.damageDealt || 0);
+      });
+      const top = ranked[0];
+      const winners = top ? ranked.filter((player) => player.alive === top.alive && player.hp === top.hp && player.hand.length === top.hand.length && (player.damageDealt || 0) === (top.damageDealt || 0)) : [];
+      gameState.status = 'ENDED';
+      gameState.phase = 'ENDED';
+      gameState.endReason = 'TIME';
+      gameState.winnerIds = winners.map((player) => player.id);
+      gameState.winnerId = winners.length === 1 ? winners[0].id : null;
+      gameState.pendingAttack = null;
+      gameState.pendingRescue = null;
+      gameState.responseDeadline = null;
+      addLog(winners.length > 1
+        ? `对局时间到，${winners.map((player) => player.nickname).join('、')} 并列获胜。`
+        : `对局时间到，${top?.nickname || '无人'} 按结算顺序获胜。`);
+      persistGame();
+      render();
+    }
+    function finishSurvivalMatchIfNeeded() {
+      if (!gameState || gameState.status === 'ENDED') return true;
+      const survivors = gameState.players.filter((player) => player.alive);
+      if (survivors.length > 1) return false;
+      gameState.status = 'ENDED';
+      gameState.phase = 'ENDED';
+      gameState.endReason = 'DEFEAT';
+      gameState.winnerId = survivors[0]?.id || null;
+      gameState.winnerIds = survivors.map((player) => player.id);
+      gameState.pendingAttack = null;
+      gameState.pendingRescue = null;
+      gameState.responseDeadline = null;
+      addLog(survivors.length
+        ? `${survivors[0].nickname} 成为最后存活的玩家，对局结束。`
+        : '所有玩家均已出局，本局没有胜者。');
+      persistGame();
+      render();
+      return true;
+    }
+    function finishDefeat(attacker, target, timedOut = false) {
+      if (!target?.alive || gameState.status === 'ENDED') return;
+      target.alive = false;
+      gameState.pendingRescue = null;
+      gameState.responseDeadline = null;
+      addLog(`${target.nickname}${timedOut ? '救治超时，' : ''}被击败，退出本局。`);
+      if (finishSurvivalMatchIfNeeded()) return;
+      if (gameState.pendingAttack) {
+        gameState.pendingAttack.resolvedTargetIds = [...(gameState.pendingAttack.resolvedTargetIds || []), target.id];
+        advancePendingAttack();
+        return;
+      }
+      gameState.phase = 'PLAY';
+      if (target.id === gameState.currentPlayerId) {
+        nextTurn();
+        return;
+      }
+      persistGame();
+      render();
+    }
+    function advancePendingAttack() {
+      const pending = gameState.pendingAttack;
+      if (!pending) return;
+      const targetIds = pending.targetIds || [pending.targetId];
+      const currentIndex = pending.targetIndex || 0;
+      let nextIndex = currentIndex + 1;
+      while (nextIndex < targetIds.length && !gameState.players.some((player) => player.id === targetIds[nextIndex] && player.alive)) nextIndex += 1;
+      if (nextIndex >= targetIds.length) {
+        gameState.pendingAttack = null;
+        gameState.phase = 'PLAY';
+        gameState.responseDeadline = null;
+        if (gameState.matchDeadline && Date.now() >= gameState.matchDeadline) {
+          finishTimedMatch();
+          return;
+        }
+        persistGame();
+        render();
+        return;
+      }
+      pending.targetIndex = nextIndex;
+      pending.targetId = targetIds[nextIndex];
+      pending.damageTransferred = false;
+      gameState.phase = 'RESPONSE';
+      gameState.responseDeadline = Date.now() + RESPONSE_MS;
+      const nextTarget = gameState.players.find((player) => player.id === pending.targetId);
+      addLog(`${nextTarget?.nickname || '目标'} 成为爆炸弩的下一个响应目标。`);
+      if (!nextTarget?.hand.some((card) => card.type === 'dodge' || card.type === 'untargetable')) {
+        resolveAttack(false);
+        return;
+      }
+      persistGame();
+      render();
+    }
+    function resolveAttack(dodged, timedOut = false, responseName = '闪') {
+      if (!gameState.pendingAttack) return;
+      const pending = gameState.pendingAttack;
+      const attacker = gameState.players.find((player) => player.id === pending.attackerId);
+      let target = gameState.players.find((player) => player.id === pending.targetId);
+      if (!attacker || !target) return;
+      if (dodged) addLog(`${target.nickname} 打出${responseName}，成功抵消杀。`);
+      else {
+        let damage = 1;
+        attacker.skillUsage = attacker.skillUsage || {};
+        const damageBoost = getSkill(attacker, 'SLASH_DAMAGE_UP');
+        if (damageBoost && attacker.skillUsage.slashDamageRound !== gameState.round) {
+          attacker.skillUsage.slashDamageRound = gameState.round;
+          damage += damageBoost.value;
+          addLog(`${attacker.nickname} 发动「${damageBoost.name}」，本次杀伤害 +${damageBoost.value}。`);
+        }
+        const targetWeaponUsage = weaponUsageFor(target);
+        if (damage > 0 && hasWeapon(target, '奇门遁甲') && !pending.damageTransferred && targetWeaponUsage.qimenRound !== gameState.round) {
+          const transferTarget = adjacentPlayersOf(target).find((player) => player.alive);
+          if (transferTarget) {
+            targetWeaponUsage.qimenRound = gameState.round;
+            pending.damageTransferred = true;
+            target = transferTarget;
+            pending.targetId = transferTarget.id;
+            addLog(`${gameState.players.find((player) => player.id === pending.targetIds?.[pending.targetIndex || 0])?.nickname || '目标'} 发动「奇门遁甲」，将伤害转移给 ${target.nickname}。`);
+          }
+        }
+        target.skillUsage = target.skillUsage || {};
+        if (damage > 0 && hasWeapon(target, '奇盾') && !hasWeapon(attacker, '轩辕剑') && weaponUsageFor(target).shieldRound !== gameState.round) {
+          weaponUsageFor(target).shieldRound = gameState.round;
+          damage = Math.max(0, damage - 1);
+          addLog(`${target.nickname} 的「奇盾」使本回合第一次受到的杀伤害 -1。`);
+        }
+        if (hasSkill(target, 'FIRST_DAMAGE_REDUCTION') && target.skillUsage.damageReductionRound !== gameState.round) {
+          target.skillUsage.damageReductionRound = gameState.round;
+          damage = Math.max(0, damage - 1);
+          const skill = [target.hero?.primarySkill, target.hero?.secondarySkill]
+            .find((item) => item?.templateId === 'FIRST_DAMAGE_REDUCTION');
+          addLog(`${target.nickname} 发动「${skill?.name || '稳如泰山'}」，本次受到的伤害 -1。`);
+        }
+        target.hp = Math.max(0, target.hp - damage);
+        attacker.damageDealt = (attacker.damageDealt || 0) + damage;
+        if (damage > 0) addLog(`${target.nickname}${timedOut ? '响应超时，' : ''}受到 ${damage} 点伤害，剩余 ${target.hp} 点生命。`);
+        if (damage > 0 && hasWeapon(attacker, '吸血刀')) {
+          const recover = Math.min(damage, attacker.maxHp - attacker.hp);
+          attacker.hp += recover;
+          addLog(`${attacker.nickname} 通过「吸血刀」恢复 ${recover} 点生命。`);
+        }
+        if (damage > 0 && hasWeapon(attacker, '妙手') && attacker.id !== target.id) {
+          const attackerWeaponUsage = weaponUsageFor(attacker);
+          if (attackerWeaponUsage.miaoshouRound !== gameState.round && target.hand.length) {
+            attackerWeaponUsage.miaoshouRound = gameState.round;
+            const stolen = target.hand.splice(Math.floor(Math.random() * target.hand.length), 1)[0];
+            attacker.hand.push(stolen);
+            addLog(`${attacker.nickname} 通过「妙手」随机获得 ${target.nickname} 一张手牌。`);
+          }
+        }
+        const damageDraw = getSkill(target, 'DAMAGE_DRAW');
+        if (damage > 0 && damageDraw) {
+          const drawn = drawCards(gameState, target, damageDraw.value);
+          addLog(`${target.nickname} 发动「${damageDraw.name}」，受伤后摸 ${drawn} 张牌。`);
+        }
+        if (target.hp <= 0) {
+          const hasHeal = target.hand.some((card) => card.type === 'heal');
+          if (hasHeal) {
+            gameState.pendingRescue = { attackerId: attacker.id, targetId: target.id, reason: 'damage' };
+            gameState.phase = 'DYING';
+            gameState.responseDeadline = Date.now() + RESPONSE_MS;
+            addLog(`${target.nickname} 进入濒死状态，可使用奶自救。`);
+            persistGame();
+            render();
+          return;
+        }
+        if (hasWeapon(attacker, '吸血刀')) {
+          attacker.hp = attacker.maxHp;
+          addLog(`${attacker.nickname} 通过「吸血刀」直接击杀后恢复至上限。`);
+        }
+        finishDefeat(attacker, target);
+        return;
+        }
+      }
+      if (gameState.pendingAttack) {
+        gameState.pendingAttack.resolvedTargetIds = [...(gameState.pendingAttack.resolvedTargetIds || []), target.id];
+        advancePendingAttack();
+      }
+    }
+    function resolveDying(rescued, timedOut = false) {
+      if (!gameState.pendingRescue) return;
+      const pending = gameState.pendingRescue;
+      const attacker = gameState.players.find((player) => player.id === pending.attackerId);
+      const target = gameState.players.find((player) => player.id === pending.targetId);
+      if (!target) return;
+      if (!rescued) {
+        finishDefeat(attacker, target, timedOut);
+        return;
+      }
+      gameState.pendingRescue = null;
+      addLog(`${target.nickname} 使用奶自救，生命恢复至 ${target.hp}/${target.maxHp}。`);
+      if (gameState.pendingAttack) {
+        advancePendingAttack();
+        return;
+      }
+      gameState.phase = 'PLAY';
+      gameState.responseDeadline = null;
+      if (gameState.matchDeadline && Date.now() >= gameState.matchDeadline) {
+        finishTimedMatch();
+        return;
+      }
+      persistGame();
+      render();
+    }
+    function useRescueHeal() {
+      if (gameState.phase !== 'DYING' || gameState.pendingRescue?.targetId !== currentPlayer.id) return;
+      const card = currentPlayer.hand.find((item) => item.uid === selectedCardUid && item.type === 'heal') || currentPlayer.hand.find((item) => item.type === 'heal');
+      if (!card) return;
+      currentPlayer.hand = currentPlayer.hand.filter((item) => item.uid !== card.uid);
+      gameState.discardPile.push(card);
+      currentPlayer.hp = Math.min(currentPlayer.maxHp, Math.max(0, currentPlayer.hp) + healAmountFor(currentPlayer));
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      resolveDying(true);
+      playSound();
+    }
+    function respondDodge() {
+      if (gameState.phase === 'DYING') {
+        useRescueHeal();
+        return;
+      }
+      if (gameState.phase !== 'RESPONSE' || gameState.pendingAttack?.targetId !== currentPlayer.id) return;
+      const card = currentPlayer.hand.find((item) => item.type === 'dodge');
+      if (!card) return;
+      currentPlayer.hand = currentPlayer.hand.filter((item) => item.uid !== card.uid);
+      gameState.discardPile.push(card);
+      selectedCardUid = null;
+      selectedSecondaryTargetId = null;
+      resolveAttack(true); playSound();
+    }
+    function takeDamage() {
+      if (gameState.phase === 'DYING' && gameState.pendingRescue?.targetId === currentPlayer.id) {
+        resolveDying(false);
+        playSound();
+        return;
+      }
+      if (gameState.phase !== 'RESPONSE' || gameState.pendingAttack?.targetId !== currentPlayer.id) return;
+      resolveAttack(false); playSound();
+    }
+    function startManualDiscard() {
+      if (!hasTurn() || gameState.phase !== 'PLAY') return;
+      const excess = Math.max(0, currentPlayer.hand.length - handLimitFor(currentPlayer));
+      gameState.phase = 'DISCARD';
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      selectedDiscardUids = new Set();
+      addLog(excess > 0
+        ? `${currentPlayer.nickname} 选择手动弃牌，至少需要弃置 ${excess} 张牌。`
+        : `${currentPlayer.nickname} 选择弃牌后过，可以批量弃置任意手牌。`);
+      persistGame(); render();
+    }
+    function requestEndTurn() {
+      if (!hasTurn() || gameState.phase !== 'PLAY') return;
+      const excess = Math.max(0, currentPlayer.hand.length - handLimitFor(currentPlayer));
+      ui.turnDialogCopy.textContent = excess > 0
+        ? `你有 ${excess} 张超额手牌。可手动弃牌后过；直接过则由系统随机弃掉超额手牌。`
+        : '你可以先选择任意手牌弃置后再过，也可以不弃牌直接进入下一回合。';
+      if (!ui.turnDialog.open) ui.turnDialog.showModal();
+      playSound();
+    }
+    function directPass() {
+      if (!hasTurn() || (gameState.phase !== 'PLAY' && gameState.phase !== 'DISCARD')) return;
+      const excess = Math.max(0, currentPlayer.hand.length - handLimitFor(currentPlayer));
+      if (excess) {
+        shuffle(currentPlayer.hand);
+        const discarded = currentPlayer.hand.splice(0, excess);
+        gameState.discardPile.push(...discarded);
+        addLog(`${currentPlayer.nickname} 选择直接过，系统随机弃置 ${excess} 张超额手牌。`);
+      } else addLog(`${currentPlayer.nickname} 选择直接过。`);
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      selectedDiscardUids = new Set();
+      nextTurn(); playSound();
+    }
+    function endTurn() { directPass(); }
+    function handleEndTurnButton() {
+      if (gameState.phase === 'DISCARD') directPass();
+      else requestEndTurn();
+    }
+    function discardSelected() {
+      if (!hasTurn() || gameState.phase !== 'DISCARD') return;
+      if (!selectedDiscardUids.size) return;
+      const discarded = currentPlayer.hand.filter((card) => selectedDiscardUids.has(card.uid));
+      currentPlayer.hand = currentPlayer.hand.filter((card) => !selectedDiscardUids.has(card.uid));
+      gameState.discardPile.push(...discarded);
+      addLog(`${currentPlayer.nickname} 一次弃置 ${discarded.length} 张牌，剩余手牌 ${currentPlayer.hand.length} 张。`);
+      selectedDiscardUids = new Set();
+      if (currentPlayer.hand.length > handLimitFor(currentPlayer)) {
+        persistGame(); render();
+      } else {
+        nextTurn();
+      }
+      playSound();
+    }
+    function randomDiscardAndEnd() {
+      if (!hasTurn()) return;
+      const excess = Math.max(0, currentPlayer.hand.length - handLimitFor(currentPlayer));
+      if (excess) {
+        shuffle(currentPlayer.hand);
+        const discarded = currentPlayer.hand.splice(0, excess);
+        gameState.discardPile.push(...discarded);
+        addLog(`${currentPlayer.nickname} 弃牌超时，系统随机弃置 ${excess} 张牌。`);
+      }
+      selectedDiscardUids = new Set();
+      selectedSecondaryTargetId = null;
+      nextTurn();
+    }
+    function nextTurn() {
+      if (finishSurvivalMatchIfNeeded()) return;
+      const currentIndex = gameState.players.findIndex((player) => player.id === gameState.currentPlayerId);
+      clearSilenceIfNeeded(gameState.players[currentIndex]);
+      let nextIndex = currentIndex;
+      do { nextIndex = (nextIndex + 1) % gameState.players.length; } while (!gameState.players[nextIndex].alive);
+      gameState.currentPlayerId = gameState.players[nextIndex].id;
+      gameState.round += 1;
+      gameState.phase = 'DRAWING';
+      gameState.killUsed = false;
+      gameState.turnStartedAt = Date.now();
+      gameState.turnDeadline = Date.now() + DRAW_MS + TURN_MS;
+      gameState.drawDeadline = Date.now() + DRAW_MS;
+      gameState.drawPlayerId = gameState.players[nextIndex].id;
+      const nextDrawCount = drawCountFor(gameState.players[nextIndex]);
+      gameState.drawCount = nextDrawCount;
+      gameState.responseDeadline = null;
+      gameState.pendingRescue = null;
+      selectedCardUid = null;
+      selectedTargetId = null;
+      selectedSecondaryTargetId = null;
+      const drawn = drawCards(gameState, gameState.players[nextIndex], nextDrawCount);
+      addLog(`${gameState.players[nextIndex].nickname} 开始摸 ${drawn} 张牌，2 秒后进入出牌阶段。`);
+      persistGame(); render();
+    }
+    function runDemoTurn() {
+      const active = current();
+      const responseTarget = gameState.pendingAttack && gameState.players.find((player) => player.id === gameState.pendingAttack.targetId);
+      const rescueTarget = gameState.pendingRescue && gameState.players.find((player) => player.id === gameState.pendingRescue.targetId);
+      if (gameState.phase === 'RESPONSE' && responseTarget?.isDemo) {
+        if (botTimer) return;
+        botTimer = setTimeout(() => {
+          botTimer = null;
+          const dodge = responseTarget.hand.find((card) => card.type === 'dodge');
+          if (dodge) {
+            responseTarget.hand = responseTarget.hand.filter((card) => card.uid !== dodge.uid);
+            gameState.discardPile.push(dodge);
+            resolveAttack(true);
+          } else resolveAttack(false);
+        }, 750);
+        return;
+      }
+      if (gameState.phase === 'DYING' && rescueTarget?.isDemo) {
+        if (botTimer) return;
+        botTimer = setTimeout(() => {
+          botTimer = null;
+          const heal = rescueTarget.hand.find((card) => card.type === 'heal');
+          if (!heal) { resolveDying(false); return; }
+          rescueTarget.hand = rescueTarget.hand.filter((card) => card.uid !== heal.uid);
+          gameState.discardPile.push(heal);
+          rescueTarget.hp = Math.min(rescueTarget.maxHp, rescueTarget.hp + healAmountFor(rescueTarget));
+          resolveDying(true);
+        }, 750);
+        return;
+      }
+      if (!active?.isDemo || gameState.status !== 'PLAYING') { clearTimeout(botTimer); botTimer = null; return; }
+      if (botTimer) return;
+      if (gameState.phase !== 'PLAY') return;
+      botTimer = setTimeout(() => {
+        botTimer = null;
+        if (gameState.currentPlayerId !== active.id || gameState.phase !== 'PLAY') return;
+        const heal = active.hand.find((card) => card.type === 'heal');
+        if (heal && active.hp < active.maxHp) {
+          selectedCardUid = heal.uid;
+          useHealCard();
+          return;
+        }
+        const kill = active.hand.find((card) => card.type === 'kill');
+        if (kill && canUseSlash(active)) {
+          selectedCardUid = kill.uid;
+          selectedTargetId = gameState.players.find((player) => player.id !== active.id && player.alive)?.id || null;
+          playKill();
+          setTimeout(() => { if (gameState.phase === 'PLAY' && gameState.currentPlayerId === active.id) endTurn(); }, 850);
+        }
+        else endTurn();
+      }, 850);
+    }
+    function tick() {
+      if (!gameState || gameState.status === 'ENDED') { ui.timerText.textContent = '--'; return; }
+      const deadline = gameState.phase === 'DRAWING' ? gameState.drawDeadline : (gameState.phase === 'RESPONSE' || gameState.phase === 'DYING') ? gameState.responseDeadline : gameState.turnDeadline;
+      const phaseRemaining = gameState.phase === 'DRAWING' ? `摸牌 ${formatRemaining((gameState.drawDeadline || Date.now()) - Date.now())}` : deadline ? formatRemaining(deadline - Date.now()) : '--';
+      ui.timerText.textContent = gameState.matchDeadline ? `总时长 ${formatRemaining(gameState.matchDeadline - Date.now())}` : phaseRemaining;
+      if (gameState.matchDeadline && Date.now() >= gameState.matchDeadline && !['DRAWING', 'RESPONSE', 'DYING'].includes(gameState.phase)) {
+        finishTimedMatch();
+        return;
+      }
+      if (gameState.phase === 'DRAWING' && deadline && Date.now() >= deadline) {
+        const drawingPlayer = gameState.players.find((player) => player.id === gameState.drawPlayerId);
+        const mayFinishDraw = drawingPlayer?.id === roomSession.playerId || drawingPlayer?.isDemo;
+        if (mayFinishDraw) {
+          gameState.phase = 'PLAY';
+          gameState.drawDeadline = null;
+          gameState.turnStartedAt = Date.now();
+          gameState.turnDeadline = Date.now() + TURN_MS;
+          addLog(`${drawingPlayer?.nickname || '玩家'} 摸牌完成，进入出牌阶段。`);
+          activateSilenceIfNeeded(drawingPlayer);
+          persistGame();
+          render();
+        }
+        runDemoTurn();
+        return;
+      }
+      if (deadline && Date.now() >= deadline) {
+        const responseTarget = gameState.pendingAttack && gameState.players.find((player) => player.id === gameState.pendingAttack.targetId);
+        const rescueTarget = gameState.pendingRescue && gameState.players.find((player) => player.id === gameState.pendingRescue.targetId);
+        const mayResolveResponse = responseTarget?.id === roomSession.playerId || responseTarget?.isDemo;
+        const mayResolveRescue = rescueTarget?.id === roomSession.playerId || rescueTarget?.isDemo;
+        const mayResolveTurn = current()?.id === roomSession.playerId || current()?.isDemo;
+        if (gameState.phase === 'RESPONSE' && mayResolveResponse) resolveAttack(false, true);
+        else if (gameState.phase === 'DYING' && mayResolveRescue) resolveDying(false, true);
+        else if ((gameState.phase === 'PLAY' || gameState.phase === 'DISCARD') && mayResolveTurn) randomDiscardAndEnd();
+      }
+      runDemoTurn();
+    }
+
+    function useSelectedCard() {
+      if (!currentPlayer || !selectedCardUid) return;
+      if (gameState.phase === 'PLAY' && isSilenced(currentPlayer)) return;
+      const selected = currentPlayer.hand.find((card) => card.uid === selectedCardUid);
+      if (selected?.type === 'kill') playKill();
+      else if (selected?.type === 'heal' && gameState.phase === 'DYING') useRescueHeal();
+      else if (selected?.type === 'heal') useHealCard();
+      else if (selected?.type === 'dodge') useDodgeAsHeal();
+      else if (selected?.type === 'silence') useSilenceCard();
+      else if (selected?.type === 'untargetable') useUntargetableCard();
+      else if (selected?.type === 'weapon') equipWeapon();
+    }
+
+    ui.useCard.addEventListener('click', useSelectedCard);
+    ui.endTurn.addEventListener('click', handleEndTurnButton);
+    ui.discardSelected.addEventListener('click', discardSelected);
+    ui.clearSelection.addEventListener('click', () => { selectedCardUid = null; selectedTargetId = null; selectedSecondaryTargetId = null; selectedDiscardUids = new Set(); render(); });
+    ui.cardGuide.addEventListener('click', () => { if (!ui.cardGuideDialog.open) ui.cardGuideDialog.showModal(); playSound(); });
+    ui.closeCardGuide.addEventListener('click', () => { ui.cardGuideDialog.close(); playSound(); });
+    ui.respondDodge.addEventListener('click', respondDodge);
+    ui.takeDamage.addEventListener('click', takeDamage);
+    ui.cancelTurnEnd.addEventListener('click', () => { ui.turnDialog.close(); playSound(); });
+    ui.discardThenPass.addEventListener('click', () => { ui.turnDialog.close(); startManualDiscard(); playSound(); });
+    ui.directPass.addEventListener('click', () => { ui.turnDialog.close(); directPass(); });
+    ui.turnDialog.addEventListener('click', (event) => { if (event.target === ui.turnDialog) ui.turnDialog.close(); });
+    ui.cardGuideDialog.addEventListener('click', (event) => { if (event.target === ui.cardGuideDialog) ui.cardGuideDialog.close(); });
+    ui.backLobby.addEventListener('click', () => { sessionStorage.removeItem(sessionStorageKey); window.location.href = 'lobby.html'; });
+
+    function handleRemoteGameUpdate() {
+      const latestRoom = getRooms()[roomSession.roomCode];
+      if (!latestRoom?.game) {
+        if (!gameState) tryStartGame();
+        return;
+      }
+      roomData = latestRoom;
+      gameState = latestRoom.game;
+      refreshPlayerHeroes(roomData);
+      currentPlayer = gameState.players.find((player) => player.id === roomSession.playerId) || gameState.players[0];
+      render();
+    }
+
+    function startGameLoop() {
+      if (startGameLoop.started) return;
+      startGameLoop.started = true;
+      render();
+      tickTimer = setInterval(tick, 250);
+    }
+
+    function tryStartGame() {
+      const status = loadOrCreateGame();
+      if (status === 'ready') {
+        startGameLoop();
+        return;
+      }
+      if (status === 'missing') {
+        sessionStorage.removeItem(sessionStorageKey);
+        window.location.replace('lobby.html');
+        return;
+      }
+      ui.notice.textContent = '正在等待房主创建对局状态...';
+      setTimeout(() => {
+        if (!gameState) tryStartGame();
+      }, 650);
+    }
+
+    if (!roomSession || !/^\d{6}$/.test(roomSession.roomCode)) {
+      window.location.replace('lobby.html');
+    } else if (!roomHasReadyHeroes(getRooms()[roomSession.roomCode])) {
+      window.location.replace('customize.html');
+    } else {
+      window.addEventListener('storage', (event) => {
+        if (event.key !== roomStorageKey) return;
+        handleRemoteGameUpdate();
+      });
+      tryStartGame();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>等待大厅 - 天下英雄杀</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #080b14;
+      --surface: rgba(9, 13, 23, 0.91);
+      --surface-soft: rgba(19, 25, 38, 0.78);
+      --line: rgba(218, 227, 246, 0.18);
+      --line-bright: rgba(225, 233, 250, 0.4);
+      --text: #f1f3f7;
+      --muted: #a9b1c1;
+      --gold: #d7b466;
+      --gold-light: #f0d18a;
+      --red: #9b403b;
+      --green: #81aaa0;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+    }
+
+    body {
+      min-width: 1000px;
+      min-height: 100vh;
+      overflow: hidden;
+      color: var(--text);
+      background: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+    }
+
+    .scene {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background: url("首页背景图.png") center / cover no-repeat;
+      transform: scale(1.015);
+    }
+
+    .scene::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(4, 7, 14, 0.63), rgba(4, 7, 14, 0.35) 48%, rgba(4, 7, 14, 0.72)),
+        linear-gradient(0deg, rgba(3, 5, 11, 0.72), transparent 48%);
+    }
+
+    .shell {
+      width: min(1240px, calc(100% - 64px));
+      height: 100vh;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: 26px 0 22px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 28px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      font-family: SimSun, STSong, serif;
+      color: var(--gold-light);
+      font-size: 23px;
+      font-weight: 700;
+    }
+
+    .connection {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .connection-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 10px rgba(129, 170, 160, 0.7);
+    }
+
+    .main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 330px;
+      align-items: center;
+      gap: 28px;
+      padding: 28px 0;
+    }
+
+    .room-panel,
+    .info-panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-top-color: var(--line-bright);
+      border-radius: 6px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(10px);
+    }
+
+    .room-panel {
+      padding: 28px;
+    }
+
+    .room-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      margin-bottom: 7px;
+      color: var(--gold);
+      font-size: 12px;
+    }
+
+    h1 {
+      font-family: SimSun, STSong, serif;
+      font-size: 30px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .player-count {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .player-count strong {
+      margin-right: 3px;
+      color: var(--gold-light);
+      font-size: 20px;
+    }
+
+    .seats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .seat {
+      min-height: 132px;
+      display: grid;
+      grid-template-columns: 56px 1fr auto;
+      align-items: center;
+      gap: 16px;
+      padding: 18px;
+      background: var(--surface-soft);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+    }
+
+    .seat.empty {
+      background: rgba(10, 14, 24, 0.55);
+      border-style: dashed;
+    }
+
+    .seat.current {
+      border-color: rgba(215, 180, 102, 0.48);
+      box-shadow: inset 0 0 0 1px rgba(215, 180, 102, 0.1);
+    }
+
+    .avatar {
+      width: 56px;
+      height: 56px;
+      display: grid;
+      place-items: center;
+      background: rgba(215, 180, 102, 0.11);
+      border: 1px solid rgba(215, 180, 102, 0.36);
+      border-radius: 50%;
+      color: var(--gold-light);
+      font-family: SimSun, STSong, serif;
+      font-size: 22px;
+    }
+
+    .empty .avatar {
+      color: #687183;
+      background: rgba(255, 255, 255, 0.025);
+      border-color: var(--line);
+      border-style: dashed;
+    }
+
+    .player-name {
+      max-width: 180px;
+      overflow: hidden;
+      color: var(--text);
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .player-role {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .seat-status {
+      color: var(--green);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .empty .seat-status,
+    .empty .player-name {
+      color: #737c8e;
+    }
+
+    .info-panel {
+      padding: 26px;
+    }
+
+    .info-section + .info-section {
+      margin-top: 24px;
+      padding-top: 22px;
+      border-top: 1px solid var(--line);
+    }
+
+    .info-label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .room-code-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .room-code {
+      color: var(--gold-light);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 34px;
+      line-height: 1;
+    }
+
+    .copy-button {
+      width: 38px;
+      height: 38px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .copy-button:hover,
+    .copy-button:focus-visible {
+      background: rgba(255, 255, 255, 0.11);
+      border-color: var(--line-bright);
+      outline: none;
+    }
+
+    .copy-button span {
+      display: block;
+      font-size: 11px;
+    }
+
+    .details {
+      display: grid;
+      gap: 13px;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .detail-row strong {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .start-button,
+    .leave-button,
+    .dialog-button {
+      width: 100%;
+      min-height: 48px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .start-button {
+      margin-top: 24px;
+      background: var(--red);
+      border: 1px solid rgba(238, 173, 143, 0.46);
+      font-weight: 700;
+    }
+
+    .start-button:disabled {
+      color: #7f8796;
+      background: rgba(255, 255, 255, 0.045);
+      border-color: var(--line);
+      cursor: not-allowed;
+    }
+
+    .start-hint {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .leave-button {
+      margin-top: 12px;
+      color: #c7cdd8;
+      background: transparent;
+      border: 1px solid var(--line);
+    }
+
+    .leave-button:hover,
+    .leave-button:focus-visible {
+      color: var(--text);
+      border-color: var(--line-bright);
+      outline: none;
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      color: rgba(215, 222, 235, 0.57);
+      font-size: 12px;
+    }
+
+    dialog {
+      width: 410px;
+      margin: auto;
+      color: var(--text);
+      background: #0b101c;
+      border: 1px solid var(--line-bright);
+      border-radius: 6px;
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.7);
+    }
+
+    dialog::backdrop {
+      background: rgba(2, 4, 10, 0.72);
+      backdrop-filter: blur(5px);
+    }
+
+    .dialog-content {
+      padding: 26px;
+    }
+
+    .dialog-content h2 {
+      font-family: SimSun, STSong, serif;
+      font-size: 23px;
+    }
+
+    .dialog-content p {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .dialog-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .dialog-button {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--line);
+    }
+
+    .dialog-button.danger {
+      background: var(--red);
+      border-color: rgba(238, 173, 143, 0.46);
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      z-index: 10;
+      padding: 13px 18px;
+      background: rgba(8, 12, 20, 0.96);
+      border: 1px solid var(--line-bright);
+      border-radius: 4px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+      transform: translate(-50%, 20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="scene" aria-hidden="true"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">天下英雄杀</div>
+      <div class="connection">
+        <span class="connection-dot" aria-hidden="true"></span>
+        <span id="connectionText">本地房间</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="room-panel" aria-labelledby="waiting-title">
+        <div class="room-heading">
+          <div>
+            <p class="eyebrow">等待其他玩家加入</p>
+            <h1 id="waiting-title">房间等待大厅</h1>
+          </div>
+          <p class="player-count"><strong id="playerCount">1</strong>/ 2 位玩家</p>
+        </div>
+
+        <div class="seats" id="seats"></div>
+      </section>
+
+      <aside class="info-panel" aria-label="房间信息">
+        <section class="info-section">
+          <p class="info-label">房间号</p>
+          <div class="room-code-row">
+            <strong class="room-code" id="roomCode">------</strong>
+            <button class="copy-button sound-button" id="copyButton" type="button" aria-label="复制房间号" title="复制房间号">
+              <span>复制</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="info-section details">
+          <div class="detail-row">
+            <span>对局模式</span>
+            <strong id="modeText">生存模式</strong>
+          </div>
+          <div class="detail-row">
+            <span>房间密码</span>
+            <strong>已设置</strong>
+          </div>
+          <div class="detail-row">
+            <span>允许观战</span>
+            <strong id="spectatingText">否</strong>
+          </div>
+        </section>
+
+        <button class="start-button sound-button" id="primaryButton" type="button" disabled>开始游戏</button>
+        <p class="start-hint" id="startHint">还需 3 名玩家加入并准备</p>
+        <button class="leave-button sound-button" id="leaveButton" type="button">解散房间</button>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>本地测试房间 · 浏览器存储同步</span>
+      <span>四人到齐并准备后可开始</span>
+    </footer>
+  </div>
+
+  <dialog id="leaveDialog" aria-labelledby="leave-title">
+    <div class="dialog-content">
+      <h2 id="leave-title">解散房间</h2>
+      <p id="leaveText">解散后将返回大厅主菜单，当前房间号立即失效。</p>
+      <div class="dialog-actions">
+        <button class="dialog-button sound-button" id="cancelLeave" type="button">取消</button>
+        <button class="dialog-button danger sound-button" id="confirmLeave" type="button">确认解散</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <audio id="buttonSound" src="按钮声音.mp3" preload="auto"></audio>
+  <script src="network.js"></script>
+
+  <script>
+    const roomStorageKey = 'heroKillLocalRooms';
+    const sessionStorageKey = 'heroKillRoomSession';
+    const maxPlayers = 2;
+    let roomSession;
+
+    try {
+      roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey));
+    } catch {
+      roomSession = null;
+    }
+
+    function getRooms() {
+      try {
+        return JSON.parse(localStorage.getItem(roomStorageKey)) || {};
+      } catch {
+        return {};
+      }
+    }
+
+    function saveRooms(rooms) {
+      if (window.HeroKillNet) return window.HeroKillNet.saveRooms(rooms);
+      localStorage.setItem(roomStorageKey, JSON.stringify(rooms));
+      return Promise.resolve(rooms);
+    }
+
+    if (!roomSession || !/^\d{6}$/.test(roomSession.roomCode)) {
+      window.location.replace('lobby.html');
+    } else {
+      const sound = document.getElementById('buttonSound');
+      const toast = document.getElementById('toast');
+      const leaveDialog = document.getElementById('leaveDialog');
+      const seats = document.getElementById('seats');
+      const primaryButton = document.getElementById('primaryButton');
+      const startHint = document.getElementById('startHint');
+      const leaveButton = document.getElementById('leaveButton');
+      const leaveTitle = document.getElementById('leave-title');
+      const leaveText = document.getElementById('leaveText');
+      const confirmLeave = document.getElementById('confirmLeave');
+      let roomData;
+      let currentPlayer;
+      let toastTimer;
+
+      function playSound() {
+        sound.currentTime = 0;
+        sound.play().catch(() => {});
+      }
+
+      function showToast(message) {
+        clearTimeout(toastTimer);
+        toast.textContent = message;
+        toast.classList.add('visible');
+        toastTimer = setTimeout(() => toast.classList.remove('visible'), 2600);
+      }
+
+      function createSeat(player, index) {
+        const seatNames = ['一', '二'];
+        const article = document.createElement('article');
+        const avatar = document.createElement('div');
+        const playerInfo = document.createElement('div');
+        const playerName = document.createElement('div');
+        const playerRole = document.createElement('div');
+        const status = document.createElement('span');
+
+        article.className = `seat${player ? '' : ' empty'}${player?.id === roomSession.playerId ? ' current' : ''}`;
+        avatar.className = 'avatar';
+        avatar.setAttribute('aria-hidden', 'true');
+        playerName.className = 'player-name';
+        playerRole.className = 'player-role';
+        status.className = 'seat-status';
+
+        if (player) {
+          avatar.textContent = player.nickname.slice(0, 1);
+          playerName.textContent = player.nickname;
+          playerRole.textContent = `${seatNames[index]}号位${player.role === 'host' ? ' · 房主' : ''}${player.id === roomSession.playerId ? ' · 你' : ''}`;
+          status.textContent = player.ready ? '已准备' : '未准备';
+        } else {
+          avatar.textContent = seatNames[index];
+          playerName.textContent = '等待玩家';
+          playerRole.textContent = `${seatNames[index]}号位`;
+          status.textContent = '空位';
+        }
+
+        playerInfo.append(playerName, playerRole);
+        article.append(avatar, playerInfo, status);
+        return article;
+      }
+
+      function renderRoom() {
+        const rooms = getRooms();
+        roomData = rooms[roomSession.roomCode];
+        currentPlayer = roomData?.players.find((player) => player.id === roomSession.playerId);
+
+        if (!roomData || !currentPlayer) {
+          sessionStorage.removeItem(sessionStorageKey);
+          showToast('房间已解散或当前座位已失效。');
+          setTimeout(() => window.location.replace('lobby.html'), 900);
+          return;
+        }
+
+        const isHost = currentPlayer.role === 'host';
+        const allReady = roomData.players.length === maxPlayers && roomData.players.every((player) => player.ready);
+        const missingPlayers = maxPlayers - roomData.players.length;
+        const unreadyPlayers = roomData.players.filter((player) => !player.ready).length;
+
+        document.getElementById('roomCode').textContent = roomData.roomCode;
+        document.getElementById('playerCount').textContent = roomData.players.length;
+        document.getElementById('connectionText').textContent = isHost ? '本地房间 · 房主' : '本地房间 · 已加入';
+        document.getElementById('spectatingText').textContent = roomData.spectating ? '是' : '否';
+        document.getElementById('modeText').textContent = roomData.mode === 'timed'
+          ? `定时模式 · ${roomData.duration} 分钟`
+          : '生存模式';
+
+        seats.replaceChildren();
+        for (let index = 0; index < maxPlayers; index += 1) {
+          seats.appendChild(createSeat(roomData.players[index], index));
+        }
+
+        if (isHost) {
+          primaryButton.textContent = '开始游戏';
+          primaryButton.disabled = !allReady;
+          startHint.textContent = missingPlayers > 0
+            ? `还需 ${missingPlayers} 名玩家加入并准备`
+            : unreadyPlayers > 0 ? `还有 ${unreadyPlayers} 名玩家未准备` : '所有玩家已准备';
+          leaveButton.textContent = '解散房间';
+          leaveTitle.textContent = '解散房间';
+          leaveText.textContent = '解散后所有本地玩家将退出，当前房间号立即失效。';
+          confirmLeave.textContent = '确认解散';
+        } else {
+          primaryButton.textContent = currentPlayer.ready ? '取消准备' : '准备';
+          primaryButton.disabled = false;
+          startHint.textContent = currentPlayer.ready ? '已准备，等待房主开始' : '准备后等待其他玩家';
+          leaveButton.textContent = '退出房间';
+          leaveTitle.textContent = '退出房间';
+          leaveText.textContent = '退出后将释放当前座位并返回大厅主菜单。';
+          confirmLeave.textContent = '确认退出';
+        }
+      }
+
+      document.querySelectorAll('.sound-button').forEach((button) => {
+        button.addEventListener('click', playSound);
+      });
+
+      document.getElementById('copyButton').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(roomSession.roomCode);
+          showToast(`房间号 ${roomSession.roomCode} 已复制。`);
+        } catch {
+          showToast(`房间号：${roomSession.roomCode}`);
+        }
+      });
+
+      primaryButton.addEventListener('click', () => {
+        if (!currentPlayer) return;
+
+        if (currentPlayer.role === 'host') {
+          const canStart = roomData.players.length === maxPlayers && roomData.players.every((player) => player.ready);
+          if (canStart) {
+            const rooms = getRooms();
+            const room = rooms[roomSession.roomCode];
+            if (!room) return;
+            room.phase = 'CUSTOMIZING';
+            room.startedAt = Date.now();
+            saveRooms(rooms);
+            showToast('两名玩家已就绪，正在进入卡牌定制。');
+            setTimeout(() => {
+              window.location.href = 'customize.html';
+            }, 420);
+          }
+          return;
+        }
+
+        const rooms = getRooms();
+        const room = rooms[roomSession.roomCode];
+        const player = room?.players.find((item) => item.id === roomSession.playerId);
+        if (!player) return;
+        player.ready = !player.ready;
+        saveRooms(rooms);
+        renderRoom();
+      });
+
+      leaveButton.addEventListener('click', () => leaveDialog.showModal());
+      document.getElementById('cancelLeave').addEventListener('click', () => leaveDialog.close());
+      confirmLeave.addEventListener('click', () => {
+        const rooms = getRooms();
+        const room = rooms[roomSession.roomCode];
+
+        if (room) {
+          if (currentPlayer.role === 'host') {
+            delete rooms[roomSession.roomCode];
+          } else {
+            room.players = room.players.filter((player) => player.id !== roomSession.playerId);
+          }
+          saveRooms(rooms);
+        }
+
+        sessionStorage.removeItem(sessionStorageKey);
+        setTimeout(() => {
+          window.location.href = 'lobby.html';
+        }, 160);
+      });
+
+      leaveDialog.addEventListener('click', (event) => {
+        if (event.target === leaveDialog) leaveDialog.close();
+      });
+
+      window.addEventListener('storage', (event) => {
+        if (event.key !== roomStorageKey) return;
+        const rooms = getRooms();
+        const room = rooms[roomSession.roomCode];
+        if (room?.phase === 'CUSTOMIZING') {
+          window.location.href = 'customize.html';
+          return;
+        }
+        renderRoom();
+      });
+
+      renderRoom();
+      if (roomData?.phase === 'CUSTOMIZING') {
+        window.location.replace('customize.html');
+      }
+    }
+  </script>
+</body>
+</html>

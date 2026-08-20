@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>大厅主菜单 - 天下英雄杀</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #080b14;
+      --panel: rgba(10, 14, 25, 0.88);
+      --panel-strong: rgba(7, 10, 18, 0.96);
+      --line: rgba(214, 226, 255, 0.19);
+      --line-bright: rgba(228, 235, 255, 0.42);
+      --text: #f2f4f8;
+      --muted: #aeb7c9;
+      --gold: #d9b568;
+      --gold-bright: #f1d18b;
+      --red: #9f3c3c;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+    }
+
+    body {
+      min-width: 1000px;
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--text);
+      background: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    .scene {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background: url("imlobby.png") center / cover no-repeat;
+      transform: scale(1.015);
+    }
+
+    .scene::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(4, 7, 14, 0.24) 0%, rgba(4, 7, 14, 0.2) 42%, rgba(4, 7, 14, 0.73) 100%),
+        linear-gradient(0deg, rgba(4, 7, 14, 0.55), transparent 38%);
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 48px));
+      min-height: 100vh;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: 30px 0 24px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      font-family: SimSun, STSong, serif;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--gold-bright);
+      text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #719aa3;
+      box-shadow: 0 0 10px rgba(113, 154, 163, 0.7);
+    }
+
+    .main {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 48px 3vw 48px 0;
+    }
+
+    .menu {
+      width: min(410px, 100%);
+      padding: 34px 34px 30px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-top-color: var(--line-bright);
+      border-radius: 6px;
+      box-shadow: 0 26px 70px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(10px);
+    }
+
+    .eyebrow {
+      margin-bottom: 8px;
+      color: var(--gold);
+      font-size: 12px;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-family: SimSun, STSong, serif;
+      font-size: 34px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .menu-copy {
+      margin: 12px 0 28px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .menu-actions {
+      display: grid;
+      gap: 12px;
+    }
+
+    .menu-button,
+    .submit-button,
+    .secondary-button {
+      min-height: 52px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+    }
+
+    .menu-button {
+      display: grid;
+      grid-template-columns: 38px 1fr auto;
+      align-items: center;
+      width: 100%;
+      padding: 10px 16px;
+      background: rgba(236, 240, 249, 0.08);
+      border-color: var(--line);
+      text-align: left;
+    }
+
+    .menu-button:hover,
+    .menu-button:focus-visible {
+      background: rgba(236, 240, 249, 0.14);
+      border-color: var(--line-bright);
+      transform: translateX(-3px);
+      outline: none;
+    }
+
+    .menu-button.primary {
+      background: linear-gradient(135deg, #a0473e, #742b2e);
+      border-color: rgba(238, 173, 143, 0.5);
+    }
+
+    .menu-button.primary:hover,
+    .menu-button.primary:focus-visible {
+      background: linear-gradient(135deg, #b25247, #843338);
+    }
+
+    .button-mark {
+      color: var(--gold-bright);
+      font-family: SimSun, STSong, serif;
+      font-size: 20px;
+    }
+
+    .button-label {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .button-note {
+      color: rgba(242, 244, 248, 0.62);
+      font-size: 12px;
+    }
+
+    .back-button {
+      min-height: 42px;
+      margin-top: 6px;
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .back-button:hover,
+    .back-button:focus-visible {
+      color: var(--text);
+      outline: none;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: flex-end;
+      color: rgba(215, 222, 235, 0.55);
+      font-size: 12px;
+    }
+
+    dialog {
+      width: min(520px, calc(100% - 32px));
+      max-height: calc(100vh - 40px);
+      margin: auto;
+      overflow: auto;
+      color: var(--text);
+      background: var(--panel-strong);
+      border: 1px solid var(--line-bright);
+      border-radius: 6px;
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.7);
+    }
+
+    dialog::backdrop {
+      background: rgba(2, 4, 10, 0.72);
+      backdrop-filter: blur(5px);
+    }
+
+    .dialog-body {
+      padding: 28px;
+    }
+
+    .dialog-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .dialog-head h2 {
+      font-family: SimSun, STSong, serif;
+      font-size: 25px;
+      letter-spacing: 0;
+    }
+
+    .dialog-head p {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .close-button {
+      flex: 0 0 36px;
+      width: 36px;
+      height: 36px;
+      background: transparent;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--muted);
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .close-button:hover,
+    .close-button:focus-visible {
+      color: var(--text);
+      border-color: var(--line-bright);
+      outline: none;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .field {
+      display: grid;
+      gap: 8px;
+    }
+
+    .field > span,
+    .field-label {
+      color: #dce1eb;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="number"] {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 13px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      outline: none;
+    }
+
+    input[type="number"]:disabled {
+      color: rgba(242, 244, 248, 0.38);
+      background: rgba(255, 255, 255, 0.025);
+      border-color: rgba(154, 165, 184, 0.16);
+      cursor: not-allowed;
+    }
+
+    input:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(217, 181, 104, 0.1);
+    }
+
+    input::placeholder {
+      color: #70798c;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      padding: 3px;
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+    }
+
+    .segmented input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .segmented label {
+      padding: 10px 12px;
+      border-radius: 3px;
+      color: var(--muted);
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .segmented input:checked + label {
+      color: var(--text);
+      background: rgba(217, 181, 104, 0.16);
+      box-shadow: inset 0 0 0 1px rgba(217, 181, 104, 0.35);
+    }
+
+    .form-actions {
+      display: grid;
+      grid-template-columns: 1fr 1.6fr;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .form-message {
+      margin-top: 18px;
+      padding: 11px 13px;
+      color: #ffd7d2;
+      background: rgba(159, 60, 60, 0.2);
+      border: 1px solid rgba(224, 112, 102, 0.55);
+      border-radius: 4px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .form-message[hidden] {
+      display: none;
+    }
+
+    .submit-button {
+      background: #963d39;
+      border-color: rgba(238, 173, 143, 0.45);
+      font-weight: 700;
+    }
+
+    .submit-button:hover,
+    .submit-button:focus-visible {
+      background: #aa4842;
+      outline: none;
+    }
+
+    .secondary-button {
+      background: rgba(255, 255, 255, 0.055);
+      border-color: var(--line);
+      color: var(--muted);
+    }
+
+    .secondary-button:hover,
+    .secondary-button:focus-visible {
+      color: var(--text);
+      border-color: var(--line-bright);
+      outline: none;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      z-index: 20;
+      width: min(440px, calc(100% - 32px));
+      padding: 14px 18px;
+      color: var(--text);
+      background: rgba(9, 13, 22, 0.96);
+      border: 1px solid var(--line-bright);
+      border-radius: 4px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+      text-align: center;
+      transform: translate(-50%, 24px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="scene" aria-hidden="true"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">天下英雄杀</div>
+      <div class="status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>本地大厅</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="menu" aria-labelledby="lobby-title">
+        <p class="eyebrow">四人回合制卡牌对局</p>
+        <h1 id="lobby-title">大厅主菜单</h1>
+        <p class="menu-copy">创建一场新对局，或凭房间号加入其他玩家。</p>
+
+        <div class="menu-actions">
+          <button class="menu-button primary sound-button" type="button" data-dialog="createDialog">
+            <span class="button-mark" aria-hidden="true">创</span>
+            <span class="button-label">创建房间</span>
+            <span class="button-note">成为房主</span>
+          </button>
+          <button class="menu-button sound-button" type="button" data-dialog="joinDialog">
+            <span class="button-mark" aria-hidden="true">入</span>
+            <span class="button-label">加入房间</span>
+            <span class="button-note">使用房间号</span>
+          </button>
+          <button class="back-button sound-button" id="backButton" type="button">返回首页</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">当前为本地界面原型</footer>
+  </div>
+
+  <dialog id="createDialog" aria-labelledby="create-title">
+    <form class="dialog-body" id="createForm">
+      <div class="dialog-head">
+        <div>
+          <h2 id="create-title">创建房间</h2>
+          <p>设置本局规则，房间号将在服务端接入后自动生成。</p>
+        </div>
+        <button class="close-button sound-button" type="button" data-close aria-label="关闭">&times;</button>
+      </div>
+
+      <div class="form-grid">
+        <label class="field">
+          <span>房主昵称</span>
+          <input name="nickname" type="text" maxlength="12" placeholder="请输入 2 至 12 个字符" required minlength="2" autocomplete="nickname">
+        </label>
+
+        <label class="field">
+          <span>房间密码</span>
+          <input name="password" type="password" inputmode="numeric" pattern="[0-9]{3,6}" placeholder="3 至 6 位数字" required autocomplete="new-password">
+        </label>
+
+        <div class="field">
+          <span class="field-label">对局模式</span>
+          <div class="segmented">
+            <input id="survivalMode" name="mode" type="radio" value="survival" checked>
+            <label for="survivalMode">生存模式</label>
+            <input id="timedMode" name="mode" type="radio" value="timed">
+            <label for="timedMode">定时模式</label>
+          </div>
+        </div>
+
+        <label class="field" id="durationField">
+          <span>对局时长（分钟）</span>
+          <input id="durationInput" name="duration" type="number" min="10" max="60" step="5" value="30" disabled>
+        </label>
+
+      </div>
+
+      <div class="form-actions">
+        <button class="secondary-button sound-button" type="button" data-close>取消</button>
+        <button class="submit-button sound-button" type="submit">确认创建</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="joinDialog" aria-labelledby="join-title">
+    <form class="dialog-body" id="joinForm">
+      <div class="dialog-head">
+        <div>
+          <h2 id="join-title">加入房间</h2>
+          <p>输入房间信息，与另外三名玩家会合。</p>
+        </div>
+        <button class="close-button sound-button" type="button" data-close aria-label="关闭">&times;</button>
+      </div>
+
+      <div class="form-grid">
+        <label class="field">
+          <span>本局昵称</span>
+          <input name="nickname" type="text" maxlength="12" placeholder="请输入 2 至 12 个字符" required minlength="2" autocomplete="nickname">
+        </label>
+
+        <label class="field">
+          <span>房间号</span>
+          <input name="roomCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6 位数字房间号" required autocomplete="off">
+        </label>
+
+        <label class="field">
+          <span>房间密码</span>
+          <input name="password" type="password" inputmode="numeric" pattern="[0-9]{3,6}" placeholder="3 至 6 位数字" required autocomplete="current-password">
+        </label>
+      </div>
+
+      <p class="form-message" id="joinMessage" role="alert" aria-live="assertive" hidden></p>
+
+      <div class="form-actions">
+        <button class="secondary-button sound-button" type="button" data-close>取消</button>
+        <button class="submit-button sound-button" type="submit">进入房间</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <audio id="buttonSound" src="按钮声音.mp3" preload="auto"></audio>
+  <script src="network.js"></script>
+
+  <script>
+    const sound = document.getElementById('buttonSound');
+    const toast = document.getElementById('toast');
+    const durationInput = document.getElementById('durationInput');
+    const joinForm = document.getElementById('joinForm');
+    const joinMessage = document.getElementById('joinMessage');
+    const roomStorageKey = 'heroKillLocalRooms';
+    const sessionStorageKey = 'heroKillRoomSession';
+    const maxPlayers = 2;
+    let toastTimer;
+
+    function getRooms() {
+      try {
+        const rooms = JSON.parse(localStorage.getItem(roomStorageKey)) || {};
+        const expirationTime = Date.now() - (24 * 60 * 60 * 1000);
+        let changed = false;
+
+        Object.keys(rooms).forEach((roomCode) => {
+          if (!rooms[roomCode].createdAt || rooms[roomCode].createdAt < expirationTime) {
+            delete rooms[roomCode];
+            changed = true;
+          }
+        });
+
+        if (changed) localStorage.setItem(roomStorageKey, JSON.stringify(rooms));
+        return rooms;
+      } catch {
+        return {};
+      }
+    }
+
+    function saveRooms(rooms) {
+      if (window.HeroKillNet) return window.HeroKillNet.saveRooms(rooms);
+      localStorage.setItem(roomStorageKey, JSON.stringify(rooms));
+      return Promise.resolve(rooms);
+    }
+
+    async function syncRooms() {
+      return window.HeroKillNet ? HeroKillNet.loadRooms() : getRooms();
+    }
+
+    function createId() {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      const values = new Uint32Array(2);
+      crypto.getRandomValues(values);
+      return `${Date.now()}-${values[0]}-${values[1]}`;
+    }
+
+    function createRoomCode(rooms) {
+      const randomValue = new Uint32Array(1);
+      let roomCode;
+
+      do {
+        crypto.getRandomValues(randomValue);
+        roomCode = String(100000 + (randomValue[0] % 900000));
+      } while (rooms[roomCode]);
+
+      return roomCode;
+    }
+
+    function playSound() {
+      sound.currentTime = 0;
+      sound.play().catch(() => {});
+    }
+
+    function showToast(message) {
+      clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add('visible');
+      toastTimer = setTimeout(() => toast.classList.remove('visible'), 3200);
+    }
+
+    function showJoinMessage(message) {
+      joinMessage.textContent = message;
+      joinMessage.hidden = false;
+    }
+
+    function clearJoinMessage() {
+      joinMessage.textContent = '';
+      joinMessage.hidden = true;
+    }
+
+    document.querySelectorAll('.sound-button').forEach((button) => {
+      button.addEventListener('click', playSound);
+    });
+
+    document.querySelectorAll('[data-dialog]').forEach((button) => {
+      button.addEventListener('click', () => {
+        if (button.dataset.dialog === 'joinDialog') clearJoinMessage();
+        document.getElementById(button.dataset.dialog).showModal();
+      });
+    });
+
+    document.querySelectorAll('[data-close]').forEach((button) => {
+      button.addEventListener('click', () => button.closest('dialog').close());
+    });
+
+    document.querySelectorAll('dialog').forEach((dialog) => {
+      dialog.addEventListener('click', (event) => {
+        if (event.target === dialog) dialog.close();
+      });
+    });
+
+    document.querySelectorAll('input[name="mode"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const isTimedMode = input.value === 'timed';
+        durationInput.disabled = !isTimedMode;
+        durationInput.required = isTimedMode;
+      });
+    });
+
+    document.getElementById('backButton').addEventListener('click', () => {
+      setTimeout(() => {
+        window.location.href = 'home.html';
+      }, 150);
+    });
+
+    document.getElementById('createForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!event.currentTarget.reportValidity()) return;
+
+      const formData = new FormData(event.currentTarget);
+      const rooms = await syncRooms();
+      const roomCode = createRoomCode(rooms);
+      const playerId = createId();
+      const roomData = {
+        roomCode,
+        schemaVersion: 1,
+        revision: 0,
+        password: formData.get('password'),
+        mode: formData.get('mode'),
+        duration: formData.get('mode') === 'timed' ? Number(formData.get('duration')) : null,
+        createdAt: Date.now(),
+        players: [{
+          id: playerId,
+          nickname: formData.get('nickname').trim(),
+          role: 'host',
+          ready: true
+        }]
+      };
+
+      rooms[roomCode] = roomData;
+      await saveRooms(rooms);
+      sessionStorage.setItem(sessionStorageKey, JSON.stringify({ roomCode, playerId }));
+      document.getElementById('createDialog').close();
+      showToast(`房间 ${roomCode} 创建成功，正在进入等待大厅。`);
+      setTimeout(() => {
+        window.location.href = 'waiting-room.html';
+      }, 420);
+    });
+
+    joinForm.addEventListener('input', clearJoinMessage);
+
+    joinForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!event.currentTarget.reportValidity()) return;
+
+      const formData = new FormData(event.currentTarget);
+      const roomCode = formData.get('roomCode');
+      const nickname = formData.get('nickname').trim();
+      const rooms = await syncRooms();
+      const room = rooms[roomCode];
+
+      if (!room) {
+        showJoinMessage('房间不存在或已失效，请检查房间号。');
+        return;
+      }
+
+      if (room.password !== formData.get('password')) {
+        showJoinMessage('房间密码错误，请重新输入。');
+        return;
+      }
+
+      if (room.players.length >= maxPlayers) {
+        showJoinMessage('房间人数已满，暂时无法加入。');
+        return;
+      }
+
+      if (room.players.some((player) => player.nickname === nickname)) {
+        showJoinMessage('该昵称已在房间中，请更换昵称。');
+        return;
+      }
+
+      const playerId = createId();
+      room.players.push({ id: playerId, nickname, role: 'guest', ready: false });
+      await saveRooms(rooms);
+      sessionStorage.setItem(sessionStorageKey, JSON.stringify({ roomCode, playerId }));
+      document.getElementById('joinDialog').close();
+      showToast(`已加入房间 ${roomCode}，正在进入等待大厅。`);
+      setTimeout(() => {
+        window.location.href = 'waiting-room.html';
+      }, 420);
+    });
+  </script>
+</body>
+</html>

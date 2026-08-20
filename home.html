@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>天下英雄杀</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+    }
+
+    .bg {
+      position: fixed;
+      inset: 0;
+      background-image: url('imhome.png');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+    }
+
+    .center {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 48px;
+    }
+
+    .title {
+      font-size: 56px;
+      font-weight: 700;
+      color: #f0d080;
+      letter-spacing: 0.15em;
+      text-shadow:
+        0 0 20px rgba(200, 140, 30, 0.8),
+        0 2px 8px rgba(0, 0, 0, 0.9);
+      font-family: 'SimSun', 'STSong', serif;
+    }
+
+    .start-btn {
+      position: relative;
+      padding: 16px 56px;
+      background: linear-gradient(180deg, #1a1208 0%, #0d0b06 50%, #1a1208 100%);
+      color: #d4a520;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 0.25em;
+      border: 2px solid #b8860b;
+      border-radius: 2px;
+      cursor: pointer;
+      font-family: 'SimSun', 'STSong', serif;
+      box-shadow:
+        0 0 0 1px #7a5a00,
+        inset 0 0 12px rgba(180, 130, 10, 0.15),
+        0 6px 28px rgba(0, 0, 0, 0.7);
+      text-shadow: 0 0 10px rgba(212, 165, 32, 0.6), 0 1px 3px rgba(0,0,0,0.8);
+      transition: transform 0.12s ease, box-shadow 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+      user-select: none;
+      outline: none;
+    }
+
+    /* 四角装饰 */
+    .start-btn::before,
+    .start-btn::after {
+      content: '';
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-color: #d4a520;
+      border-style: solid;
+      transition: border-color 0.12s ease;
+    }
+    .start-btn::before {
+      top: 4px; left: 4px;
+      border-width: 2px 0 0 2px;
+    }
+    .start-btn::after {
+      bottom: 4px; right: 4px;
+      border-width: 0 2px 2px 0;
+    }
+
+    .start-btn:hover {
+      color: #f5c842;
+      border-color: #d4a520;
+      box-shadow:
+        0 0 0 1px #b8860b,
+        inset 0 0 20px rgba(212, 165, 32, 0.2),
+        0 0 18px rgba(212, 165, 32, 0.35),
+        0 8px 36px rgba(0, 0, 0, 0.75);
+      text-shadow: 0 0 14px rgba(245, 200, 66, 0.9), 0 1px 3px rgba(0,0,0,0.8);
+      transform: translateY(-2px);
+    }
+    .start-btn:hover::before,
+    .start-btn:hover::after {
+      border-color: #f5c842;
+    }
+
+    .start-btn:active {
+      color: #c8941a;
+      border-color: #a07010;
+      box-shadow:
+        0 0 0 1px #6a4e00,
+        inset 0 0 10px rgba(160, 110, 10, 0.25),
+        0 3px 14px rgba(0, 0, 0, 0.6);
+      transform: translateY(1px);
+    }
+  </style>
+</head>
+<body>
+  <div class="bg"></div>
+
+  <div class="center">
+    <div class="title">天下英雄杀</div>
+    <button class="start-btn" id="startBtn">开始游戏</button>
+  </div>
+
+  <audio id="btnSound" src="按钮声音.mp3" preload="auto"></audio>
+
+  <script>
+    const btn = document.getElementById('startBtn');
+    const sound = document.getElementById('btnSound');
+
+    function playSound() {
+      sound.currentTime = 0;
+      sound.play().catch(() => {});
+    }
+
+    btn.addEventListener('click', () => {
+      playSound();
+      btn.disabled = true;
+      setTimeout(() => {
+        window.location.href = 'lobby.html';
+      }, 180);
+    });
+  </script>
+</body>
+</html>
