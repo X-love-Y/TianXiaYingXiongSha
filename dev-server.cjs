@@ -1,7 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { generateHero } = require('./hero-generator.cjs');
+const { generateHero, planFallbackSkills, testModelConnection } = require('./hero-generator.cjs');
 
 const root = process.cwd();
 const port = Number(process.env.WEB_AI_GAME_PORT || 8000);
@@ -43,6 +43,20 @@ function normalizeRooms(inputRooms) {
   return nextRooms;
 }
 
+// 对外广播/响应时隐藏房主填写的 API Key，服务器内存里保留完整配置用于 AI 生成。
+function sanitizeRoomsForClient(sourceRooms) {
+  const nextRooms = clone(sourceRooms || {});
+  Object.values(nextRooms).forEach((room) => {
+    if (room?.aiConfig) {
+      const safeConfig = { ...room.aiConfig };
+      delete safeConfig.apiKey;
+      if (Object.keys(safeConfig).length) room.aiConfig = safeConfig;
+      else delete room.aiConfig;
+    }
+  });
+  return nextRooms;
+}
+
 rooms = normalizeRooms(rooms);
 
 function sendJson(response, status, payload) {
@@ -79,7 +93,7 @@ function readJson(request) {
 }
 
 function broadcastRooms() {
-  const payload = `event: rooms\ndata: ${JSON.stringify({ rooms, updatedAt: Date.now() })}\n\n`;
+  const payload = `event: rooms\ndata: ${JSON.stringify({ rooms: sanitizeRoomsForClient(rooms), updatedAt: Date.now() })}\n\n`;
   roomClients.forEach((client) => {
     try {
       client.write(payload);
@@ -90,7 +104,12 @@ function broadcastRooms() {
 }
 
 function applyRoomSnapshot(nextRooms) {
-  rooms = normalizeRooms(nextRooms);
+  const currentRooms = rooms;
+  const mergedRooms = normalizeRooms(nextRooms);
+  Object.entries(mergedRooms).forEach(([roomCode, room]) => {
+    preserveAiConfig(currentRooms[roomCode], room);
+  });
+  rooms = mergedRooms;
   broadcastRooms();
   return { ok: true, rooms, updatedAt: Date.now() };
 }
@@ -151,6 +170,7 @@ function applyRoomChanges(changes, knownRevisions = {}, actorPlayerId = null) {
       conflicts.push({ roomCode, reason: 'invalid-room' });
       return;
     }
+    preserveAiConfig(currentRoom, normalized);
     if (!gameMutationAllowed(currentRoom, normalized, actorPlayerId)) {
       conflicts.push({ roomCode, reason: 'game-action-not-authorized' });
       return;
@@ -169,6 +189,19 @@ function applyRoomChanges(changes, knownRevisions = {}, actorPlayerId = null) {
   rooms = normalizeRooms(nextRooms);
   broadcastRooms();
   return { ok: true, rooms, updatedAt: Date.now() };
+}
+
+function preserveAiConfig(currentRoom, nextRoom) {
+  const currentAi = currentRoom?.aiConfig;
+  const nextAi = nextRoom?.aiConfig;
+  if (!currentAi && !nextAi) return;
+  nextRoom.aiConfig = {
+    provider: nextAi?.provider || currentAi?.provider,
+    model: nextAi?.model || currentAi?.model,
+    baseUrl: nextAi?.baseUrl || currentAi?.baseUrl,
+    apiKey: nextAi?.apiKey || currentAi?.apiKey
+  };
+  if (!nextRoom.aiConfig.provider && !nextRoom.aiConfig.apiKey) delete nextRoom.aiConfig;
 }
 
 function cleanupRooms() {
@@ -214,11 +247,46 @@ async function generateRoomHeroes(roomCode) {
 
     const generatedEntries = [];
     const blockedSkillIds = new Set();
-    for (const player of room.players) {
-      const card = room.customizations[player.id].cards[0];
-      const hero = await generateHero(card, { blockedSkillIds: Array.from(blockedSkillIds) });
+    const usedSkillNames = new Set();
+    const llmEnabled = Boolean(process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
+    const cardsById = {};
+    room.players.forEach((player) => {
+      cardsById[player.id] = room.customizations[player.id].cards[0];
+    });
+    const skillPlan = llmEnabled
+      ? null
+      : planFallbackSkills(room.players.map((player) => cardsById[player.id]));
+    const plannedIds = new Set();
+    if (skillPlan) {
+      room.players.forEach((player, index) => {
+        const current = skillPlan.get(index);
+        if (current?.primaryId) plannedIds.add(current.primaryId);
+        if (current?.secondaryId) plannedIds.add(current.secondaryId);
+      });
+    }
+    for (let index = 0; index < room.players.length; index += 1) {
+      const player = room.players[index];
+      const card = cardsById[player.id];
+      const planned = skillPlan?.get(index);
+      const planBlocked = new Set(plannedIds);
+      if (planned?.primaryId) planBlocked.delete(planned.primaryId);
+      if (planned?.secondaryId) planBlocked.delete(planned.secondaryId);
+      const aiConfig = room.aiConfig || {};
+      const hero = await generateHero(card, {
+        blockedSkillIds: Array.from(planBlocked),
+        usedNames: Array.from(usedSkillNames),
+        preferredPrimarySkillId: planned?.primaryId || null,
+        preferredSecondarySkillId: planned?.secondaryId || null,
+        provider: aiConfig.provider,
+        apiKey: aiConfig.apiKey,
+        model: aiConfig.model,
+        baseUrl: aiConfig.baseUrl
+      });
       generatedEntries.push([player.id, hero]);
-      [hero.primarySkill?.templateId, hero.secondarySkill?.templateId].filter(Boolean).forEach((id) => blockedSkillIds.add(id));
+      if (!skillPlan) {
+        [hero.primarySkill?.templateId, hero.secondarySkill?.templateId].filter(Boolean).forEach((id) => blockedSkillIds.add(id));
+      }
+      [hero.primarySkill?.name, hero.secondarySkill?.name].filter(Boolean).forEach((skillName) => usedSkillNames.add(skillName));
       const currentRoom = rooms[roomCode];
       if (currentRoom?.heroGeneration?.status === 'RUNNING') {
         currentRoom.heroGeneration.completedCount += 1;
@@ -264,7 +332,23 @@ async function generateRoomHeroes(roomCode) {
 async function handleApi(request, response, requestPath) {
   if (request.method === 'GET' && requestPath === '/api/rooms') {
     cleanupRooms();
-    sendJson(response, 200, { rooms, updatedAt: Date.now() });
+    sendJson(response, 200, { rooms: sanitizeRoomsForClient(rooms), updatedAt: Date.now() });
+    return true;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/ai/test') {
+    try {
+      const payload = await readJson(request);
+      const result = await testModelConnection({
+        provider: payload?.provider,
+        apiKey: payload?.apiKey,
+        model: payload?.model,
+        baseUrl: payload?.baseUrl
+      });
+      sendJson(response, 200, result);
+    } catch (error) {
+      sendJson(response, 400, { ok: false, message: error?.message || 'AI 连接测试失败。' });
+    }
     return true;
   }
 
@@ -342,7 +426,7 @@ async function handleApi(request, response, requestPath) {
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no'
     });
-    response.write(`event: rooms\ndata: ${JSON.stringify({ rooms, updatedAt: Date.now() })}\n\n`);
+    response.write(`event: rooms\ndata: ${JSON.stringify({ rooms: sanitizeRoomsForClient(rooms), updatedAt: Date.now() })}\n\n`);
     roomClients.add(response);
     request.on('close', () => roomClients.delete(response));
     return true;
@@ -391,5 +475,5 @@ http.createServer(async (request, response) => {
   const llmProvider = process.env.LLM_PROVIDER || (process.env.DEEPSEEK_API_KEY ? 'deepseek' : 'openai');
   const llmEnabled = Boolean(process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
   const llmModel = llmProvider === 'deepseek' ? (process.env.DEEPSEEK_MODEL || 'deepseek-chat') : (process.env.OPENAI_MODEL || 'gpt-4.1-mini');
-  console.log(`AI hero generation: ${llmEnabled ? `${llmProvider} (${llmModel})` : 'local fallback (set OPENAI_API_KEY or DEEPSEEK_API_KEY to enable LLM)'}`);
+  console.log(`AI hero generation: ${llmEnabled ? `server env fallback ${llmProvider} (${llmModel})` : 'no server key'} — 房主可在创建房间时选择 DeepSeek/通义千问并填写自己的 API Key，未配置时使用本地兜底生成。`);
 });

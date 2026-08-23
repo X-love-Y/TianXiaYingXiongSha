@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -476,6 +476,10 @@
             <strong id="modeText">生存模式</strong>
           </div>
           <div class="detail-row">
+            <span>AI 模型</span>
+            <strong id="aiModelText">本地兜底生成</strong>
+          </div>
+          <div class="detail-row">
             <span>房间密码</span>
             <strong>已设置</strong>
           </div>
@@ -624,6 +628,12 @@
         document.getElementById('modeText').textContent = roomData.mode === 'timed'
           ? `定时模式 · ${roomData.duration} 分钟`
           : '生存模式';
+        const aiProvider = roomData.aiConfig?.provider;
+        const aiModel = roomData.aiConfig?.model;
+        const providerLabel = aiProvider === 'deepseek' ? 'DeepSeek' : aiProvider === 'qwen' ? '通义千问' : '';
+        document.getElementById('aiModelText').textContent = aiProvider && aiModel
+          ? `${providerLabel} · ${aiModel}`
+          : '本地兜底生成';
 
         seats.replaceChildren();
         for (let index = 0; index < maxPlayers; index += 1) {

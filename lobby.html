@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -321,6 +321,27 @@
       outline: none;
     }
 
+    select {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 13px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      outline: none;
+    }
+
+    select:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(217, 181, 104, 0.1);
+    }
+
+    select:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
     input[type="number"]:disabled {
       color: rgba(242, 244, 248, 0.38);
       background: rgba(255, 255, 255, 0.025);
@@ -386,6 +407,33 @@
 
     .form-message[hidden] {
       display: none;
+    }
+
+    .form-message.ok {
+      color: #cde9d8;
+      background: rgba(45, 110, 85, 0.24);
+      border-color: rgba(123, 168, 152, 0.6);
+    }
+
+    .ai-skip {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .ai-skip input {
+      width: auto;
+      min-height: 0;
+      accent-color: var(--gold);
+    }
+
+    .ai-test-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     .submit-button {
@@ -520,11 +568,45 @@
           <input id="durationInput" name="duration" type="number" min="10" max="60" step="5" value="30" disabled>
         </label>
 
+        <fieldset class="field">
+          <span class="field-label">AI 大模型</span>
+          <div class="segmented">
+            <input id="aiDeepseek" name="aiProvider" type="radio" value="deepseek" checked>
+            <label for="aiDeepseek">DeepSeek</label>
+            <input id="aiQwen" name="aiProvider" type="radio" value="qwen">
+            <label for="aiQwen">通义千问</label>
+          </div>
+        </fieldset>
+
+        <label class="field">
+          <span>模型</span>
+          <select id="aiModel" name="aiModel"></select>
+        </label>
+
+        <label class="field">
+          <span>API Key</span>
+          <input id="aiKey" name="aiKey" type="password" placeholder="sk-…（只保存在本局服务端内存中）" autocomplete="off">
+        </label>
+
+        <div class="field">
+          <span class="field-label">AI 接入测试</span>
+          <div class="ai-test-row">
+            <button class="secondary-button sound-button" id="testAiButton" type="button">测试连接</button>
+          </div>
+        </div>
+
+        <label class="ai-skip">
+          <input id="aiSkip" type="checkbox">
+          暂时跳过 AI 接入，使用本地兜底生成
+        </label>
+
       </div>
+
+      <p class="form-message" id="aiTestMessage" role="alert" aria-live="polite" hidden></p>
 
       <div class="form-actions">
         <button class="secondary-button sound-button" type="button" data-close>取消</button>
-        <button class="submit-button sound-button" type="submit">确认创建</button>
+        <button class="submit-button sound-button" id="createSubmit" type="submit" disabled>请先测试 AI 连接</button>
       </div>
     </form>
   </dialog>
@@ -579,6 +661,83 @@
     const sessionStorageKey = 'heroKillRoomSession';
     const maxPlayers = 2;
     let toastTimer;
+
+    const AI_MODEL_OPTIONS = {
+      deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+      qwen: ['qwen-plus', 'qwen-turbo', 'qwen-max']
+    };
+    const aiProviderInputs = Array.from(document.querySelectorAll('input[name="aiProvider"]'));
+    const aiModelSelect = document.getElementById('aiModel');
+    const aiKeyInput = document.getElementById('aiKey');
+    const aiSkipInput = document.getElementById('aiSkip');
+    const aiTestButton = document.getElementById('testAiButton');
+    const aiTestMessage = document.getElementById('aiTestMessage');
+    const createSubmit = document.getElementById('createSubmit');
+    let aiTestOk = false;
+    let aiTesting = false;
+
+    function currentAiProvider() {
+      return aiProviderInputs.find((input) => input.checked)?.value || 'deepseek';
+    }
+    function renderAiModelOptions() {
+      const provider = currentAiProvider();
+      aiModelSelect.innerHTML = (AI_MODEL_OPTIONS[provider] || []).map((model) => `<option value="${model}">${model}</option>`).join('');
+    }
+    function setAiTestMessage(text, ok) {
+      aiTestMessage.textContent = text || '';
+      aiTestMessage.hidden = !text;
+      aiTestMessage.classList.toggle('ok', Boolean(ok));
+    }
+    function updateAiGate() {
+      const skipped = aiSkipInput.checked;
+      aiProviderInputs.forEach((input) => { input.disabled = skipped; });
+      aiModelSelect.disabled = skipped;
+      aiKeyInput.disabled = skipped;
+      aiTestButton.disabled = skipped || aiTesting;
+      createSubmit.disabled = !(aiTestOk || skipped);
+      createSubmit.textContent = skipped ? '确认创建' : (aiTestOk ? '确认创建' : '请先测试 AI 连接');
+    }
+    function resetAiTest() {
+      aiTestOk = false;
+      setAiTestMessage('', false);
+      updateAiGate();
+    }
+
+    renderAiModelOptions();
+    updateAiGate();
+    aiProviderInputs.forEach((input) => input.addEventListener('change', () => { renderAiModelOptions(); resetAiTest(); }));
+    aiModelSelect.addEventListener('change', resetAiTest);
+    aiKeyInput.addEventListener('input', resetAiTest);
+    aiSkipInput.addEventListener('change', resetAiTest);
+    aiTestButton.addEventListener('click', async () => {
+      const provider = currentAiProvider();
+      const model = aiModelSelect.value;
+      const apiKey = aiKeyInput.value.trim();
+      if (!apiKey) {
+        setAiTestMessage('请先填写 API Key 再测试。', false);
+        return;
+      }
+      aiTesting = true;
+      aiTestOk = false;
+      setAiTestMessage('正在连接模型服务并验证 Key…', false);
+      updateAiGate();
+      try {
+        const response = await fetch('/api/ai/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, model, apiKey })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) throw new Error(payload.message || `测试失败：HTTP ${response.status}`);
+        aiTestOk = true;
+        setAiTestMessage(`连接成功，可使用 ${payload.label || provider} · ${model} 创建房间。`, true);
+      } catch (error) {
+        setAiTestMessage(error.message || 'AI 连接测试失败，请检查 Key、模型和网络。', false);
+      } finally {
+        aiTesting = false;
+        updateAiGate();
+      }
+    });
 
     function getRooms() {
       try {
@@ -689,11 +848,22 @@
     document.getElementById('createForm').addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!event.currentTarget.reportValidity()) return;
+      if (!aiTestOk && !aiSkipInput.checked) {
+        setAiTestMessage('请先完成 AI 连接测试，或勾选“本地兜底生成”后再创建房间。', false);
+        return;
+      }
 
       const formData = new FormData(event.currentTarget);
       const rooms = await syncRooms();
       const roomCode = createRoomCode(rooms);
       const playerId = createId();
+      const aiConfig = aiSkipInput.checked
+        ? null
+        : {
+            provider: currentAiProvider(),
+            model: aiModelSelect.value,
+            apiKey: aiKeyInput.value.trim()
+          };
       const roomData = {
         roomCode,
         schemaVersion: 1,
@@ -701,6 +871,7 @@
         password: formData.get('password'),
         mode: formData.get('mode'),
         duration: formData.get('mode') === 'timed' ? Number(formData.get('duration')) : null,
+        ...(aiConfig ? { aiConfig } : {}),
         createdAt: Date.now(),
         players: [{
           id: playerId,
