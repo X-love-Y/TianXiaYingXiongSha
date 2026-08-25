@@ -11,8 +11,11 @@ const contentTypes = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.png': 'image/png',
-  '.mp3': 'audio/mpeg'
+  '.mp3': 'audio/mpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon'
 };
+const PUBLIC_EXTENSIONS = new Set(['.html', '.css', '.js', '.png', '.mp3', '.svg', '.ico']);
 
 let rooms = {};
 const roomClients = new Set();
@@ -129,14 +132,29 @@ function gameMutationAllowed(currentRoom, nextRoom, actorPlayerId) {
   }
 
   const expectedPlayerId = previousGame.phase === 'RESPONSE'
-    ? previousGame.pendingAttack?.targetId
+    ? (previousGame.pendingAttack?.targetId || previousGame.pendingSpell?.currentTargetId)
     : previousGame.phase === 'DYING'
       ? previousGame.pendingRescue?.targetId
       : previousGame.phase === 'DRAWING'
         ? previousGame.drawPlayerId
         : previousGame.currentPlayerId;
   const expectedIsRealPlayer = players.some((player) => player.id === expectedPlayerId);
-  if (expectedIsRealPlayer) return actorPlayerId === expectedPlayerId;
+  if (expectedIsRealPlayer) {
+    if (actorPlayerId === expectedPlayerId) return true;
+    // 期望玩家的响应/濒死/摸牌/出牌截止时间已过时，允许房主代为推进，
+    // 避免真实玩家掉线或关闭页面后整局永久卡死。
+    const now = Date.now();
+    const deadline = previousGame.phase === 'RESPONSE' || previousGame.phase === 'DYING'
+      ? previousGame.responseDeadline
+      : previousGame.phase === 'DRAWING'
+        ? previousGame.drawDeadline
+        : previousGame.turnDeadline;
+    if (deadline && now > deadline) {
+      const hostId = players.find((player) => player.role === 'host')?.id || players[0]?.id;
+      return actorPlayerId === hostId;
+    }
+    return false;
+  }
 
   const hostId = players.find((player) => player.role === 'host')?.id || players[0]?.id;
   return actorPlayerId === hostId;
@@ -221,8 +239,25 @@ function cleanupRooms() {
 function allPlayersSubmitted(room) {
   return Boolean(room?.players?.length) && room.players.every((player) => {
     const cards = room.customizations?.[player.id]?.cards;
-    return Array.isArray(cards) && cards.length === 1 && cards[0]?.name && cards[0]?.description;
+    return Array.isArray(cards) && cards.length === 5 && cards.every((card) => card?.name && card?.description);
   });
+}
+
+function allConfirmed(room) {
+  return Boolean(room?.players?.length) && room.players.every((player) => room.confirmations?.[player.id]);
+}
+
+function allPicked(room) {
+  return Boolean(room?.players?.length) && room.players.every((player) => room.picks?.[player.id]?.mainHeroId && room.picks?.[player.id]?.secondaryHeroId);
+}
+
+function shuffleList(values) {
+  const list = [...values];
+  for (let index = list.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [list[index], list[swapIndex]] = [list[swapIndex], list[index]];
+  }
+  return list;
 }
 
 function touchRoom(room) {
@@ -240,53 +275,41 @@ async function generateRoomHeroes(roomCode) {
       status: 'RUNNING',
       startedAt: Date.now(),
       completedCount: 0,
-      totalCount: room.players.length
+      totalCount: room.players.length * 5
     };
     touchRoom(room);
     broadcastRooms();
 
-    const generatedEntries = [];
-    const blockedSkillIds = new Set();
     const usedSkillNames = new Set();
     const llmEnabled = Boolean(process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
-    const cardsById = {};
+    const allCards = [];
     room.players.forEach((player) => {
-      cardsById[player.id] = room.customizations[player.id].cards[0];
+      (room.customizations[player.id]?.cards || []).slice(0, 5).forEach((card) => {
+        allCards.push({ playerId: player.id, name: card.name, description: card.description });
+      });
     });
     const skillPlan = llmEnabled
       ? null
-      : planFallbackSkills(room.players.map((player) => cardsById[player.id]));
-    const plannedIds = new Set();
-    if (skillPlan) {
-      room.players.forEach((player, index) => {
-        const current = skillPlan.get(index);
-        if (current?.primaryId) plannedIds.add(current.primaryId);
-        if (current?.secondaryId) plannedIds.add(current.secondaryId);
-      });
-    }
-    for (let index = 0; index < room.players.length; index += 1) {
-      const player = room.players[index];
-      const card = cardsById[player.id];
+      : planFallbackSkills(allCards);
+    const generatedByPlayer = {};
+    for (let index = 0; index < allCards.length; index += 1) {
+      const card = allCards[index];
       const planned = skillPlan?.get(index);
-      const planBlocked = new Set(plannedIds);
-      if (planned?.primaryId) planBlocked.delete(planned.primaryId);
-      if (planned?.secondaryId) planBlocked.delete(planned.secondaryId);
       const aiConfig = room.aiConfig || {};
       const hero = await generateHero(card, {
-        blockedSkillIds: Array.from(planBlocked),
         usedNames: Array.from(usedSkillNames),
         preferredPrimarySkillId: planned?.primaryId || null,
         preferredSecondarySkillId: planned?.secondaryId || null,
+        preferredSpecialSkillId: planned?.specialId || null,
         provider: aiConfig.provider,
         apiKey: aiConfig.apiKey,
         model: aiConfig.model,
         baseUrl: aiConfig.baseUrl
       });
-      generatedEntries.push([player.id, hero]);
-      if (!skillPlan) {
-        [hero.primarySkill?.templateId, hero.secondarySkill?.templateId].filter(Boolean).forEach((id) => blockedSkillIds.add(id));
-      }
-      [hero.primarySkill?.name, hero.secondarySkill?.name].filter(Boolean).forEach((skillName) => usedSkillNames.add(skillName));
+      hero.id = `${card.playerId}-${index}`;
+      hero.authorId = card.playerId;
+      (generatedByPlayer[card.playerId] = generatedByPlayer[card.playerId] || []).push(hero);
+      [hero.primarySkill?.name, hero.secondarySkill?.name, hero.specialSkill?.name].filter(Boolean).forEach((skillName) => usedSkillNames.add(skillName));
       const currentRoom = rooms[roomCode];
       if (currentRoom?.heroGeneration?.status === 'RUNNING') {
         currentRoom.heroGeneration.completedCount += 1;
@@ -297,18 +320,25 @@ async function generateRoomHeroes(roomCode) {
 
     const currentRoom = rooms[roomCode];
     if (!currentRoom) return;
-    currentRoom.generatedHeroes = Object.fromEntries(generatedEntries);
+    currentRoom.generatedHeroes = generatedByPlayer;
+    // 收集各玩家 5 张卡生成来源
+    const sources = [];
+    Object.values(generatedByPlayer).forEach((heroes) => {
+      heroes.forEach((hero) => { if (hero.generationSource !== 'fallback') sources.push(hero.generationSource); });
+    });
     currentRoom.heroGeneration = {
       ...currentRoom.heroGeneration,
       status: 'READY',
-      completedCount: generatedEntries.length,
+      completedCount: allCards.length,
       completedAt: Date.now(),
-      source: generatedEntries.some(([, hero]) => hero.generationSource !== 'fallback')
-        ? generatedEntries.find(([, hero]) => hero.generationSource !== 'fallback')[1].generationSource
-        : 'fallback'
+      source: sources[0] || 'fallback'
     };
-    currentRoom.phase = 'PLAYING';
-    currentRoom.startedAt = currentRoom.startedAt || Date.now();
+    delete currentRoom.dealtHands;
+    delete currentRoom.confirmations;
+    delete currentRoom.picks;
+    delete currentRoom.specialCards;
+    delete currentRoom.finalHeroes;
+    currentRoom.phase = 'REVIEWING';
     touchRoom(currentRoom);
     broadcastRooms();
   })().catch((error) => {
@@ -379,9 +409,6 @@ async function handleApi(request, response, requestPath) {
       const payload = await readJson(request);
       const room = rooms[roomCode];
       const player = room?.players?.find((item) => item.id === payload.playerId);
-      const inputCard = Array.isArray(payload.cards) ? payload.cards[0] : null;
-      const name = String(inputCard?.name || '').trim().slice(0, 16);
-      const description = String(inputCard?.description || '').trim().slice(0, 120);
       if (!room) {
         sendJson(response, 404, { ok: false, message: '房间不存在或已失效。' });
         return true;
@@ -390,30 +417,158 @@ async function handleApi(request, response, requestPath) {
         sendJson(response, 403, { ok: false, message: '玩家不属于该房间。' });
         return true;
       }
-      if (!name || !description) {
-        sendJson(response, 400, { ok: false, message: '英雄名称和描述不能为空。' });
+      if (room.phase === 'PLAYING' && (room.heroGeneration?.status === 'READY' || room.finalHeroes)) {
+        sendJson(response, 409, { ok: false, message: '本局英雄已经生成。', room });
         return true;
       }
-      if (room.phase === 'PLAYING' && room.heroGeneration?.status === 'READY') {
-        sendJson(response, 409, { ok: false, message: '本局英雄已经生成。' });
+      const rawCards = Array.isArray(payload.cards) ? payload.cards.slice(0, 5) : [];
+      if (rawCards.length !== 5) {
+        sendJson(response, 400, { ok: false, message: '请填写 5 张英雄卡。' });
         return true;
       }
+      const cards = rawCards.map((card) => {
+        const name = String(card?.name || '').trim().slice(0, 16);
+        const description = String(card?.description || '').trim().slice(0, 120);
+        if (!name || !description) throw new Error('英雄名称和描述不能为空。');
+        return { name, description };
+      });
 
       room.customizations = room.customizations || {};
       room.customizations[player.id] = {
         playerId: player.id,
         nickname: player.nickname,
         submittedAt: Date.now(),
-        cards: [{ name, description }]
+        cards
       };
       delete room.generatedHeroes;
+      delete room.confirmations;
+      delete room.dealtHands;
+      delete room.picks;
+      delete room.specialCards;
+      delete room.finalHeroes;
       room.heroGeneration = { status: 'WAITING' };
+      room.phase = 'CUSTOMIZING';
       touchRoom(room);
       broadcastRooms();
       if (allPlayersSubmitted(room)) void generateRoomHeroes(roomCode);
       sendJson(response, 202, { ok: true, room, generationStarted: allPlayersSubmitted(room) });
     } catch {
       sendJson(response, 400, { ok: false, message: '无法读取英雄定制数据。' });
+    }
+    return true;
+  }
+
+  const confirmationMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/confirmations$/);
+  if (request.method === 'POST' && confirmationMatch) {
+    try {
+      const roomCode = confirmationMatch[1];
+      const payload = await readJson(request);
+      const room = rooms[roomCode];
+      const player = room?.players?.find((item) => item.id === payload.playerId);
+      if (!room || !player) {
+        sendJson(response, 404, { ok: false, message: '房间或玩家不存在。' });
+        return true;
+      }
+      if (room.phase !== 'REVIEWING' || room.heroGeneration?.status !== 'READY') {
+        sendJson(response, 409, { ok: false, message: '当前不在英雄确认阶段。' });
+        return true;
+      }
+      room.confirmations = room.confirmations || {};
+      room.confirmations[player.id] = true;
+      touchRoom(room);
+      broadcastRooms();
+      if (allConfirmed(room)) {
+        // 洗乱 20 张英雄卡，随机分发每人 5 张，进入选将阶段。
+        const allHeroes = [];
+        Object.values(room.generatedHeroes).forEach((heroes) => allHeroes.push(...heroes));
+        const shuffled = shuffleList(allHeroes);
+        const dealtHands = {};
+        room.players.forEach((roomPlayer, index) => {
+          dealtHands[roomPlayer.id] = shuffled.slice(index * 5, index * 5 + 5);
+        });
+        room.dealtHands = dealtHands;
+        room.picks = {};
+        room.phase = 'SELECTING';
+        room.selectDeadline = Date.now() + 60 * 1000;
+        touchRoom(room);
+        broadcastRooms();
+      }
+      sendJson(response, 200, { ok: true, room });
+    } catch {
+      sendJson(response, 400, { ok: false, message: '无法读取确认数据。' });
+    }
+    return true;
+  }
+
+  const selectionMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/selections$/);
+  if (request.method === 'POST' && selectionMatch) {
+    try {
+      const roomCode = selectionMatch[1];
+      const payload = await readJson(request);
+      const room = rooms[roomCode];
+      const player = room?.players?.find((item) => item.id === payload.playerId);
+      if (!room || !player) {
+        sendJson(response, 404, { ok: false, message: '房间或玩家不存在。' });
+        return true;
+      }
+      if (room.phase !== 'SELECTING') {
+        sendJson(response, 409, { ok: false, message: '当前不在选将阶段。' });
+        return true;
+      }
+      const mainHeroId = String(payload.mainHeroId || '');
+      const secondaryHeroId = String(payload.secondaryHeroId || '');
+      const dealt = room.dealtHands?.[player.id] || [];
+      const hasMain = dealt.some((hero) => hero.id === mainHeroId);
+      const hasSecondary = dealt.some((hero) => hero.id === secondaryHeroId);
+      if (!hasMain || !hasSecondary || mainHeroId === secondaryHeroId) {
+        sendJson(response, 400, { ok: false, message: '所选主将和副将必须来自你的手牌且不能相同。' });
+        return true;
+      }
+      room.picks = room.picks || {};
+      room.picks[player.id] = { mainHeroId, secondaryHeroId };
+      touchRoom(room);
+      broadcastRooms();
+      if (allPicked(room)) {
+        const allHeroes = [];
+        Object.values(room.generatedHeroes).forEach((heroes) => allHeroes.push(...heroes));
+        const heroById = Object.fromEntries(allHeroes.map((hero) => [hero.id, hero]));
+        const pickedIds = new Set();
+        room.players.forEach((roomPlayer) => {
+          const picks = room.picks[roomPlayer.id];
+          pickedIds.add(picks.mainHeroId);
+          pickedIds.add(picks.secondaryHeroId);
+        });
+        const specialHeroes = allHeroes.filter((hero) => !pickedIds.has(hero.id));
+        room.specialCards = specialHeroes.map((hero, index) => ({
+          uid: `special-${index + 1}`,
+          type: 'special',
+          name: `${hero.heroName}-特技`,
+          effect: hero.specialSkill?.description || '施展英雄的独门特技。',
+          specialSkill: hero.specialSkill,
+          heroName: hero.heroName
+        }));
+        room.finalHeroes = {};
+        room.players.forEach((roomPlayer) => {
+          const picks = room.picks[roomPlayer.id];
+          const main = heroById[picks.mainHeroId];
+          const secondary = heroById[picks.secondaryHeroId];
+          room.finalHeroes[roomPlayer.id] = {
+            ...main,
+            primarySkill: main.primarySkill,
+            secondarySkill: secondary.secondarySkill,
+            specialSkill: main.specialSkill,
+            mainHeroName: main.heroName,
+            secondaryHeroName: secondary.heroName
+          };
+        });
+        room.phase = 'PLAYING';
+        room.startedAt = room.startedAt || Date.now();
+        touchRoom(room);
+        broadcastRooms();
+      }
+      sendJson(response, 200, { ok: true, room });
+    } catch {
+      sendJson(response, 400, { ok: false, message: '无法读取选将数据。' });
     }
     return true;
   }
@@ -451,8 +606,14 @@ function serveFile(response, requestPath) {
       response.end(error.code === 'ENOENT' ? 'Not found' : 'Server error');
       return;
     }
+    const ext = path.extname(filePath).toLowerCase();
+    if (!PUBLIC_EXTENSIONS.has(ext)) {
+      response.writeHead(403);
+      response.end('Forbidden');
+      return;
+    }
     response.writeHead(200, {
-      'Content-Type': contentTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+      'Content-Type': contentTypes[ext] || 'application/octet-stream',
       'Cache-Control': 'no-store, max-age=0'
     });
     response.end(data);

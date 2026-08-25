@@ -445,7 +445,7 @@
       </section>
     </main>
 
-    <footer class="footer"><span>本地原型 · 技能配置已经服务端校验</span><span>基础牌 60 · 状态牌 20 · 装备 10 · 术卡 18 · 判定牌 6 · 共 114 张基础牌堆（另加 12 张英雄特技牌）</span></footer>
+    <footer class="footer"><span>本地原型 · 技能配置已经服务端校验</span><span>基础牌 60 · 状态牌 20 · 装备 10 · 术卡 18 · 判定牌 6 · 特技牌 12</span></footer>
   </div>
 
   <section class="response-panel" id="responsePanel" aria-live="assertive">
@@ -477,6 +477,7 @@
         <section class="card-guide-item"><strong>无法选中</strong><p>自己成为“杀”或术卡目标时使用，取消本次目标。不能抵消天罚、规则弃牌或不指定目标的全体效果。</p></section>
         <section class="card-guide-item"><strong>天罚</strong><p>作为手牌使用，打出后自动令场上手牌数量最多的玩家（可并列多人）各失去 1 点生命；不可被闪或无法选中抵消，濒死时仍可用奶救援。</p></section>
         <section class="card-guide-item"><strong>术卡</strong><p>在自己的出牌阶段使用。禁令：令目标公开一张随机手牌，点数为单则弃置其一件装备，为双则其下个出牌阶段被沉默，无手牌时直接沉默。茂生：立即摸 2 张牌。死神：令目标展示手牌，若没有杀则血量降至 0 进入濒死。爱神：指定两名存活玩家平均分配生命，奇数时多出的 1 点由你指定给谁。妙手偶得：随机获得目标一张手牌，其无手牌但有装备时抢走装备并装备。玉石俱焚：自己死亡确认前可打出，拖另一名玩家同归于尽（仅剩两人时无效）。</p></section>
+        <section class="card-guide-item"><strong>英雄特技牌</strong><p>由选将阶段未被选中的 12 张英雄卡转化而来，效果为该英雄的特技，结算方式类似术卡；目标持有「天赦令」时免疫，也可用「无法选中」取消。一次性使用，使用后进入弃牌堆。</p></section>
         <section class="card-guide-item"><strong>判定牌（轮转判定）</strong><p>出牌阶段使用后进入场上，在指定回合数内随回合轮转：每到一名玩家的回合，检查该玩家是否满足条件（如手牌数为奇数/偶数、生命值未满），满足则触发效果，否则继续轮转到下一名玩家，回合数耗尽后消散。天雷：手牌数为奇数者失去 2 点生命。迷局：生命值未满者本回合跳过出牌阶段。断粮：手牌数为偶数者本回合少摸 2 张。</p></section>
         <section class="card-guide-item"><strong>装备牌</strong><p>所有装备共用一个装备槽，只能装备一件；装备新装备时旧装备回到手牌，也可在自己的出牌阶段主动卸下。装备后鼠标悬浮在槽位上可查看效果说明。</p></section>
         <section class="card-guide-item"><strong>装备效果</strong><p>连射弩箭：本回合杀不限次数。硬弓：杀可指定任意存活玩家。轩辕剑：杀无视目标装备免伤。爆炸弩：杀可附加一名相邻副目标。吸血刀：造成伤害回血，击杀回满。奇盾：每回合首次受到的杀伤害 -1。奇门遁甲：每回合一次转移即将受到的伤害。天赦令：免疫术卡与英雄特技牌。妙手：造成伤害后随机获得目标一张手牌。锦囊：摸牌阶段多摸 2 张。</p></section>
@@ -504,7 +505,9 @@
     const GAME_VERSION = 10;
     const SUITS = ['♠', '♥', '♣', '♦'];
     const POINT_LABELS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
-    const SPELL_TYPES = ['ban', 'maosheng', 'death-god', 'love-god', 'steal', 'mutual-doom'];
+    const SPELL_TYPES = ['ban', 'maosheng', 'death-god', 'love-god', 'steal', 'mutual-doom', 'special'];
+    const SPECIAL_NEEDS_TARGET = ['SPECIAL_DAMAGE_2', 'SPECIAL_STEAL_CARD', 'SPECIAL_SILENCE', 'SPECIAL_DISCARD_EQUIP'];
+    const SPECIAL_AOE = 'SPECIAL_AOE_1';
     let roomSession = null;
     let gameState = null;
     let roomData = null;
@@ -538,7 +541,7 @@
     function roomHasReadyHeroes(room) {
       return room?.heroGeneration?.status === 'READY'
         && Boolean(room?.players?.length)
-        && room.players.every((player) => room.generatedHeroes?.[player.id]);
+        && room.players.every((player) => room.finalHeroes?.[player.id] || room.generatedHeroes?.[player.id]);
     }
     function saveRooms(rooms) {
       if (window.HeroKillNet) return window.HeroKillNet.saveRooms(rooms, { playerId: roomSession?.playerId });
@@ -620,7 +623,7 @@
     function areAdjacent(firstId, secondId) {
       return adjacentPlayersOf(gameState.players.find((player) => player.id === firstId)).some((player) => player.id === secondId);
     }
-    function buildDeck() {
+    function buildDeck(room) {
       const deck = [];
       let faceIndex = 0;
       const pushCard = (card) => {
@@ -641,6 +644,16 @@
       });
       JUDGMENT_CARDS.forEach((judgment) => {
         for (let index = 0; index < 2; index += 1) pushCard({ uid: `${judgment.judgmentId}-${index + 1}`, type: 'judgment', judgmentId: judgment.judgmentId, name: judgment.name, effect: judgment.effect, condition: judgment.condition, turnsLeft: judgment.turnsLeft });
+      });
+      (room?.specialCards || []).forEach((special) => {
+        pushCard({
+          uid: special.uid,
+          type: 'special',
+          name: special.name,
+          effect: special.effect,
+          specialSkill: special.specialSkill,
+          heroName: special.heroName
+        });
       });
       return shuffle(deck);
     }
@@ -698,7 +711,10 @@
       return drawn;
     }
     function getGeneratedHero(room, playerId) {
-      return room.generatedHeroes?.[playerId] || null;
+      if (room?.finalHeroes?.[playerId]) return room.finalHeroes[playerId];
+      const legacy = room?.generatedHeroes?.[playerId];
+      if (Array.isArray(legacy)) return legacy[0] || null;
+      return legacy || null;
     }
     function hasSkill(player, templateId) {
       return [player?.hero?.primarySkill, player?.hero?.secondarySkill]
@@ -735,7 +751,7 @@
     }
     function makePlayer(roomPlayer, isDemo = false) {
       const hero = getGeneratedHero(roomData, roomPlayer.id);
-      const maxHp = MAX_HP + (hero?.maxHpBonus || 0);
+      const maxHp = hero?.maxHp || (MAX_HP + (hero?.maxHpBonus || 0));
       return {
         id: roomPlayer.id,
         nickname: roomPlayer.nickname || (isDemo ? '演示对手' : '玩家'),
@@ -782,7 +798,7 @@
         pendingAttack: null,
         pendingRescue: null,
         winnerId: null,
-        deck: buildDeck(),
+        deck: buildDeck(room),
         discardPile: [],
         actionLog: [],
         players: matchPlayers.map((roomPlayer, index) => makePlayer(roomPlayer, index >= roomPlayers.length))
@@ -949,7 +965,7 @@
           : canRescue
             ? card.type === 'heal' || card.type === 'mutual-doom'
             : ownTurn && gameState.phase === 'PLAY' && playableInTurn);
-      const labelMap = { kill: '攻击牌', heal: '恢复牌', dodge: '响应牌', silence: '控制牌', untargetable: '反制牌', 'divine-punish': '天罚牌', weapon: '装备牌', judgment: '判定牌', ban: '术卡', maosheng: '术卡', 'death-god': '术卡', 'love-god': '术卡', steal: '术卡', 'mutual-doom': '术卡' };
+      const labelMap = { kill: '攻击牌', heal: '恢复牌', dodge: '响应牌', silence: '控制牌', untargetable: '反制牌', 'divine-punish': '天罚牌', weapon: '装备牌', judgment: '判定牌', ban: '术卡', maosheng: '术卡', 'death-god': '术卡', 'love-god': '术卡', steal: '术卡', 'mutual-doom': '术卡', special: '特技牌' };
       const label = labelMap[card.type] || '卡牌';
       const cardEffect = card.effect || (card.type === 'weapon' ? weaponEffectFor(card) : '');
       const effect = (card.type === 'weapon' || card.type === 'judgment' || SPELL_TYPES.includes(card.type)) ? cardEffect : '';
@@ -966,8 +982,14 @@
         .filter(Boolean);
       activateSilenceIfNeeded(active);
       if (ui.turnDialog.open && !(hasTurn() && gameState.phase === 'PLAY')) ui.turnDialog.close();
-      const opponents = gameState.players.filter((player) => player.id !== currentPlayer.id);
-      const arrangedPlayers = [opponents[1] || null, opponents[0] || null, currentPlayer, opponents[2] || null];
+      // 固定座位：玩家一左上、玩家二右上、玩家三右下、玩家四左下，所有视角一致，
+      // 相邻关系基于座位顺序（players 数组顺序），保证判断位置的卡牌结果一致。
+      const arrangedPlayers = [
+        gameState.players[0] || null,
+        gameState.players[1] || null,
+        gameState.players[2] || null,
+        gameState.players[3] || null
+      ];
       ui.roomCode.textContent = roomSession.roomCode;
       ui.turnMeta.textContent = gameState.status === 'ENDED' ? '对局结束' : `第 ${gameState.round} 回合 · ${active?.nickname || '—'}`;
       ui.roundText.textContent = `第 ${gameState.round} 回合`;
@@ -981,6 +1003,7 @@
         const selectedDeathGod = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'death-god');
         const selectedSteal = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'steal');
         const selectedLoveGod = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'love-god');
+        const selectedSpecial = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'special');
         const selectedJudgment = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'judgment');
         const selectedDoom = gameState.phase === 'DYING' && gameState.pendingRescue?.targetId === currentPlayer.id
           && currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'mutual-doom');
@@ -990,12 +1013,18 @@
         else if (selectedBan) targetLabel = '选择为禁令目标';
         else if (selectedDeathGod) targetLabel = '选择为死神目标';
         else if (selectedSteal) targetLabel = '选择为妙手偶得目标';
+        else if (selectedSpecial) targetLabel = '选择为特技目标';
         else if (selectedSilence) targetLabel = '选择为沉默目标';
         const hardBowTargetable = selectedKill && hasEquipment(currentPlayer, '硬弓');
         const adjacentKillTargetable = selectedKill && areAdjacent(currentPlayer.id, player?.id);
         const explosionSecondary = selectedKill && hasEquipment(currentPlayer, '爆炸弩') && selectedTargetId && !selectedSecondaryTargetId && player?.id !== selectedTargetId && areAdjacent(selectedTargetId, player?.id);
         const singleSpellTargetable = Boolean(player && player.id !== currentPlayer.id && player.alive && !isSpellImmune(player)
           && (selectedBan || selectedDeathGod || selectedSteal) && (!selectedTargetId || selectedTargetId === player.id));
+        const selectedSpecialSkillId = selectedSpecial
+          ? currentPlayer.hand.find((card) => card.uid === selectedCardUid && card.type === 'special')?.specialSkill?.templateId
+          : null;
+        const specialSingleTargetable = Boolean(player && player.id !== currentPlayer.id && player.alive && !isSpellImmune(player)
+          && selectedSpecial && specialNeedsTarget(selectedSpecialSkillId) && (!selectedTargetId || selectedTargetId === player.id));
         const loveGodTargetable = Boolean(player && player.alive && selectedLoveGod
           && (selectedTargetId === player.id || selectedSecondaryTargetId === player.id || (!selectedSecondaryTargetId && selectedTargetId !== player.id)));
         const doomTargetable = Boolean(player && player.id !== currentPlayer.id && player.alive && !isSpellImmune(player) && selectedDoom);
@@ -1005,6 +1034,7 @@
           || (hasTurn() && gameState.phase === 'PLAY' && !isSilenced(currentPlayer)
             && ((selectedSilence && player.id !== currentPlayer.id)
               || singleSpellTargetable
+              || specialSingleTargetable
               || loveGodTargetable
               || (player.id !== currentPlayer.id && killTargetable)))
         ));
@@ -1052,11 +1082,19 @@
       const selectedSteal = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'steal');
       const selectedJudgment = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'judgment');
       const selectedDivine = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'divine-punish');
+      const selectedSpecial = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'special');
+      const selectedSpecialSkillId = selectedSpecial
+        ? currentPlayer.hand.find((card) => card.uid === selectedCardUid && card.type === 'special')?.specialSkill?.templateId
+        : null;
       const selectedKillReady = hasTurn() && gameState.phase === 'PLAY' && canUseSlash(currentPlayer) && selectedKill && selectedTargetId && gameState.players.some((player) => player.id === selectedTargetId && player.alive && (hasEquipment(currentPlayer, '硬弓') || areAdjacent(currentPlayer.id, player.id)));
       const selectedHealReady = hasTurn() && gameState.phase === 'PLAY' && selectedHeal && !isSilenced(currentPlayer) && currentPlayer.hp < currentPlayer.maxHp;
       const selectedDodgeHealReady = hasTurn() && gameState.phase === 'PLAY' && selectedDodge && canUseDodgeAsHeal(currentPlayer);
       const selectedSilenceReady = hasTurn() && gameState.phase === 'PLAY' && selectedSilence && !isSilenced(currentPlayer) && selectedTargetId && selectedTargetId !== currentPlayer.id && gameState.players.some((player) => player.id === selectedTargetId && player.alive);
       const selectedSingleSpellReady = hasTurn() && gameState.phase === 'PLAY' && !isSilenced(currentPlayer) && (selectedBan || selectedDeathGod || selectedSteal) && selectedTargetId && selectedTargetId !== currentPlayer.id && gameState.players.some((player) => player.id === selectedTargetId && player.alive);
+      const selectedSpecialReady = hasTurn() && gameState.phase === 'PLAY' && !isSilenced(currentPlayer) && selectedSpecial
+        && (specialNeedsTarget(selectedSpecialSkillId)
+          ? Boolean(selectedTargetId && selectedTargetId !== currentPlayer.id && gameState.players.some((player) => player.id === selectedTargetId && player.alive))
+          : true);
       const selectedDivineReady = hasTurn() && gameState.phase === 'PLAY' && !isSilenced(currentPlayer) && selectedDivine;
       const selectedJudgmentReady = hasTurn() && gameState.phase === 'PLAY' && !isSilenced(currentPlayer) && selectedJudgment;
       const selectedLoveGodReady = hasTurn() && gameState.phase === 'PLAY' && !isSilenced(currentPlayer) && selectedLoveGod && selectedTargetId && selectedSecondaryTargetId && selectedTargetId !== selectedSecondaryTargetId && gameState.players.filter((player) => player.alive && (player.id === selectedTargetId || player.id === selectedSecondaryTargetId)).length === 2;
@@ -1065,13 +1103,13 @@
       const selectedUntargetableReady = canRespond && selectedUntargetable;
       const selectedWeaponReady = hasTurn() && gameState.phase === 'PLAY' && selectedWeapon && !isSilenced(currentPlayer);
       const selectedRescueReady = canRescue && selectedHeal;
-      ui.useCard.disabled = !(selectedKillReady || selectedHealReady || selectedDodgeHealReady || selectedSilenceReady || selectedUntargetableReady || selectedWeaponReady || selectedRescueReady || selectedSingleSpellReady || selectedDivineReady || selectedJudgmentReady || selectedLoveGodReady || selectedMaoshengReady || selectedDoomReady);
+      ui.useCard.disabled = !(selectedKillReady || selectedHealReady || selectedDodgeHealReady || selectedSilenceReady || selectedUntargetableReady || selectedWeaponReady || selectedRescueReady || selectedSingleSpellReady || selectedSpecialReady || selectedDivineReady || selectedJudgmentReady || selectedLoveGodReady || selectedMaoshengReady || selectedDoomReady);
       ui.endTurn.textContent = discardMode ? '直接过（自动处理）' : '过 / 结束回合';
       ui.discardSelected.textContent = discardMode ? `弃置所选 (${selectedDiscardUids.size} 张)` : '弃置所选';
       ui.discardThenPass.disabled = !(hasTurn() && gameState.phase === 'PLAY');
       ui.directPass.disabled = !(hasTurn() && (gameState.phase === 'PLAY' || gameState.phase === 'DISCARD'));
       ui.clearSelection.disabled = !(selectedCardUid || selectedTargetId || selectedDiscardUids.size);
-      ui.helperText.textContent = gameState.status === 'ENDED' ? '本局已经结束。' : gameState.phase === 'DRAWING' ? `${gameState.players.find((player) => player.id === gameState.drawPlayerId)?.nickname || '玩家'} 正在摸牌，请等待动画完成。` : canRespond ? (respondingToSpell ? '你被术卡指向，可打出「无法选中」取消本次目标。' : '你被指向，选择一张响应牌或承受本次结算。') : discardMode ? `还需至少弃置 ${requiredDiscardCount} 张；可批量弃牌，也可点击直接过由系统处理超额手牌。` : hasTurn() ? (isSilenced(currentPlayer) ? '你处于沉默状态，本回合不能主动使用手牌或主动技能。' : selectedWeapon ? `已选择装备牌：${weaponEffectFor(currentPlayer.hand.find((card) => card.uid === selectedCardUid)) || '点击使用装备。'}` : selectedMaosheng ? '已选择「茂生」，点击使用立即摸 2 张牌。' : selectedJudgment ? '已选择「判定牌」，点击使用后将在数回合内随回合轮转判定。' : selectedDivine ? '已选择「天罚」，点击使用将自动令场上手牌数量最多的玩家（可并列多人）失去 1 点生命。' : selectedHeal ? (selectedHealReady ? `已选择「奶」，点击使用恢复 ${healAmountFor(currentPlayer)} 点生命。` : '当前生命已满，不能使用「奶」。') : selectedSilence ? (selectedSilenceReady ? '已选择「沉默」和目标，点击使用。' : '请选择其他存活玩家作为目标。') : selectedBan || selectedDeathGod || selectedSteal ? (selectedSingleSpellReady ? '已选择目标和术卡，点击使用生效。' : '请选择一名其他存活玩家作为目标。') : selectedLoveGod ? (selectedLoveGodReady ? '已选择两名目标，点击「使用」分配生命。' : selectedTargetId ? '请再选择第二名存活玩家作为爱神目标（可包含自己）。' : '请选择第一名存活玩家作为爱神目标（可包含自己）。') : gameState.killUsed ? '本回合已使用杀，仍可使用术卡、奶或结束回合。' : selectedKill && selectedTargetId ? (hasEquipment(currentPlayer, '爆炸弩') ? '已选择主目标；可再选择一名相邻玩家作为爆炸弩副目标。' : '已选择「杀」和目标，点击使用生效。') : selectedKill ? '已选择「杀」，请点击对手面板指定目标。' : selectedTargetId ? '已选择目标，请再选择一张「杀」、「沉默」或术卡。' : '可选择一张牌后点击「使用」，也可在自己的装备槽点击「卸下」。') : (canRescue && gameState.pendingRescue?.targetId === currentPlayer.id && currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'mutual-doom')) ? (selectedDoomReady ? '已选择「玉石俱焚」目标，点击使用与目标同归于尽。' : '请点击一名其他存活玩家作为同归于尽目标。') : '当前不是你的回合。';
+      ui.helperText.textContent = gameState.status === 'ENDED' ? '本局已经结束。' : gameState.phase === 'DRAWING' ? `${gameState.players.find((player) => player.id === gameState.drawPlayerId)?.nickname || '玩家'} 正在摸牌，请等待动画完成。` : canRespond ? (respondingToSpell ? '你被术卡指向，可打出「无法选中」取消本次目标。' : '你被指向，选择一张响应牌或承受本次结算。') : discardMode ? `还需至少弃置 ${requiredDiscardCount} 张；可批量弃牌，也可点击直接过由系统处理超额手牌。` : hasTurn() ? (isSilenced(currentPlayer) ? '你处于沉默状态，本回合不能主动使用手牌或主动技能。' : selectedWeapon ? `已选择装备牌：${weaponEffectFor(currentPlayer.hand.find((card) => card.uid === selectedCardUid)) || '点击使用装备。'}` : selectedMaosheng ? '已选择「茂生」，点击使用立即摸 2 张牌。' : selectedJudgment ? '已选择「判定牌」，点击使用后将在数回合内随回合轮转判定。' : selectedDivine ? '已选择「天罚」，点击使用将自动令场上手牌数量最多的玩家（可并列多人）失去 1 点生命。' : selectedHeal ? (selectedHealReady ? `已选择「奶」，点击使用恢复 ${healAmountFor(currentPlayer)} 点生命。` : '当前生命已满，不能使用「奶」。') : selectedSpecial ? (selectedSpecialReady ? '已选择特技牌，点击使用生效。' : (specialNeedsTarget(selectedSpecialSkillId) ? '请选择一名其他存活玩家作为特技目标。' : '点击使用立即生效。')) : selectedSilence ? (selectedSilenceReady ? '已选择「沉默」和目标，点击使用。' : '请选择其他存活玩家作为目标。') : selectedBan || selectedDeathGod || selectedSteal ? (selectedSingleSpellReady ? '已选择目标和术卡，点击使用生效。' : '请选择一名其他存活玩家作为目标。') : selectedLoveGod ? (selectedLoveGodReady ? '已选择两名目标，点击「使用」分配生命。' : selectedTargetId ? '请再选择第二名存活玩家作为爱神目标（可包含自己）。' : '请选择第一名存活玩家作为爱神目标（可包含自己）。') : gameState.killUsed ? '本回合已使用杀，仍可使用术卡、奶或结束回合。' : selectedKill && selectedTargetId ? (hasEquipment(currentPlayer, '爆炸弩') ? '已选择主目标；可再选择一名相邻玩家作为爆炸弩副目标。' : '已选择「杀」和目标，点击使用生效。') : selectedKill ? '已选择「杀」，请点击对手面板指定目标。' : selectedTargetId ? '已选择目标，请再选择一张「杀」、「沉默」或术卡。' : '可选择一张牌后点击「使用」，也可在自己的装备槽点击「卸下」。') : (canRescue && gameState.pendingRescue?.targetId === currentPlayer.id && currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'mutual-doom')) ? (selectedDoomReady ? '已选择「玉石俱焚」目标，点击使用与目标同归于尽。' : '请点击一名其他存活玩家作为同归于尽目标。') : '当前不是你的回合。';
       if (hasTurn() && gameState.phase === 'PLAY' && selectedDodge) {
         ui.helperText.textContent = selectedDodgeHealReady ? '技能生效：点击使用，将这张「闪」当作「奶」。' : '本回合不能再将「闪」当作「奶」。';
       } else if (gameState.phase === 'RESPONSE' && selectedUntargetable) {
@@ -1155,7 +1193,7 @@
             return;
           }
         }
-        if (!hasTurn() || gameState.phase !== 'PLAY' || !['kill', 'silence', 'ban', 'death-god', 'steal', 'love-god'].includes(selected?.type)) return;
+        if (!hasTurn() || gameState.phase !== 'PLAY' || !['kill', 'silence', 'ban', 'death-god', 'steal', 'love-god', 'special'].includes(selected?.type)) return;
         if (selected.type === 'kill' && !canUseSlash(currentPlayer)) return;
         if (selected.type === 'silence' && isSilenced(currentPlayer)) return;
         const targetId = button.dataset.targetId;
@@ -1459,6 +1497,38 @@
       targets.forEach((target) => loseHp(target, 1, '天罚', actor));
       persistGame(); playSound(); render();
     }
+    function specialNeedsTarget(skillId) {
+      return SPECIAL_NEEDS_TARGET.includes(skillId);
+    }
+    function useSpecialCard(actor = currentPlayer) {
+      if (!hasTurn(actor) || gameState.phase !== 'PLAY' || isSilenced(actor)) return;
+      const card = actor.hand.find((item) => item.uid === selectedCardUid && item.type === 'special');
+      if (!card) return;
+      const skillId = card.specialSkill?.templateId;
+      if (!skillId) return;
+      if (skillId === SPECIAL_AOE) {
+        spendCard(actor, card);
+        clearSelection();
+        const targets = gameState.players.filter((player) => player.alive && player.id !== actor.id).map((player) => player.id);
+        beginSpellPlay(card, 'special', actor.id, targets, true);
+        playSound();
+        return;
+      }
+      if (specialNeedsTarget(skillId)) {
+        const target = gameState.players.find((player) => player.id === selectedTargetId && player.id !== actor.id && player.alive && !isSpellImmune(player));
+        if (!target) return;
+        spendCard(actor, card);
+        clearSelection();
+        beginSpellPlay(card, 'special', actor.id, [target.id], true);
+        playSound();
+        return;
+      }
+      spendCard(actor, card);
+      clearSelection();
+      applySpecialEffect(actor, actor, card);
+      gameState.phase = 'PLAY';
+      persistGame(); playSound(); render();
+    }
     function beginSpellPlay(card, kind, casterId, targetIds, respectTianshe) {
       gameState.pendingSpell = { card, kind, casterId, targetIds: targetIds.filter(Boolean), targetIndex: 0, affectedIds: [], respectTianshe: Boolean(respectTianshe) };
       advanceSpellResolution();
@@ -1515,6 +1585,10 @@
       render();
     }
     function applySpellTarget(kind, caster, target, card) {
+      if (kind === 'special') {
+        applySpecialEffect(caster, target, card);
+        return;
+      }
       if (kind === 'ban') {
         if (!target.hand.length) {
           target.statusEffects = target.statusEffects || {};
@@ -1573,6 +1647,63 @@
         addLog(`${caster.nickname} 获得 ${target.nickname} 的装备「${equipped.card.name}」并装备${replaced ? `，原「${replaced.name}」进入弃牌堆` : ''}。`);
         return;
       }
+    }
+    function applySpecialEffect(caster, target, card) {
+      const skillId = card.specialSkill?.templateId;
+      const skillName = card.specialSkill?.name || card.name;
+      if (skillId === 'SPECIAL_DAMAGE_2') {
+        loseHp(target, 2, card.name, caster);
+        return;
+      }
+      if (skillId === SPECIAL_AOE) {
+        loseHp(target, 1, card.name, caster);
+        return;
+      }
+      if (skillId === 'SPECIAL_STEAL_CARD') {
+        if (target.hand.length) {
+          const stolen = target.hand.splice(Math.floor(Math.random() * target.hand.length), 1)[0];
+          caster.hand.push(stolen);
+          addLog(`${caster.nickname} 通过「${skillName}」随机获得 ${target.nickname} 的一张手牌。`);
+        } else {
+          addLog(`${caster.nickname} 发动「${skillName}」，但 ${target.nickname} 没有手牌可偷。`);
+        }
+        return;
+      }
+      if (skillId === 'SPECIAL_SILENCE') {
+        target.statusEffects = target.statusEffects || {};
+        target.statusEffects.silencePendingTurns = (target.statusEffects.silencePendingTurns || 0) + 1;
+        addLog(`${caster.nickname} 发动「${skillName}」，令 ${target.nickname} 的下个出牌阶段被沉默。`);
+        return;
+      }
+      if (skillId === 'SPECIAL_DISCARD_EQUIP') {
+        const equipped = randomEquipped(target);
+        if (equipped) {
+          discardEquipped(target, equipped.slot);
+          addLog(`${caster.nickname} 发动「${skillName}」，弃置 ${target.nickname} 的装备「${equipped.card.name}」。`);
+        } else {
+          addLog(`${caster.nickname} 发动「${skillName}」，但 ${target.nickname} 没有装备。`);
+        }
+        return;
+      }
+      if (skillId === 'SPECIAL_DRAW_3') {
+        const drawn = drawCards(gameState, caster, 3);
+        addLog(`${caster.nickname} 发动「${skillName}」，立即摸 ${drawn} 张牌。`);
+        return;
+      }
+      if (skillId === 'SPECIAL_HEAL_2') {
+        const amount = Math.min(2, caster.maxHp - caster.hp);
+        caster.hp = Math.min(caster.maxHp, caster.hp + 2);
+        addLog(`${caster.nickname} 发动「${skillName}」，恢复 ${amount} 点生命。`);
+        return;
+      }
+      if (skillId === 'SPECIAL_SHIELD_2') {
+        caster.statusEffects = caster.statusEffects || {};
+        caster.statusEffects.specialShieldRound = gameState.round;
+        caster.statusEffects.specialShieldValue = 2;
+        addLog(`${caster.nickname} 发动「${skillName}」，本回合内受到的第一次伤害减少 2 点。`);
+        return;
+      }
+      addLog(`${caster.nickname} 发动「${card.name}」，但效果尚未配置。`);
     }
     function applyLoveGod(caster, ids) {
       const targets = ids.map((id) => gameState.players.find((player) => player.id === id && player.alive)).filter(Boolean);
@@ -1758,6 +1889,13 @@
             .find((item) => item?.templateId === 'FIRST_DAMAGE_REDUCTION');
           addLog(`${target.nickname} 发动「${skill?.name || '稳如泰山'}」，本次受到的伤害 -1。`);
         }
+        const specialShield = target.statusEffects || {};
+        if (damage > 0 && specialShield.specialShieldRound === gameState.round && specialShield.specialShieldValue > 0) {
+          const reduced = Math.min(specialShield.specialShieldValue, damage);
+          specialShield.specialShieldValue -= reduced;
+          damage -= reduced;
+          addLog(`${target.nickname} 的特技护盾抵消了 ${reduced} 点伤害。`);
+        }
         target.hp = Math.max(0, target.hp - damage);
         attacker.damageDealt = (attacker.damageDealt || 0) + damage;
         if (damage > 0) addLog(`${target.nickname}${timedOut ? '响应超时，' : ''}受到 ${damage} 点伤害，剩余 ${target.hp} 点生命。`);
@@ -1813,7 +1951,7 @@
       if (!rescued) {
         gameState.pendingRescue = null;
         finishDefeat(attacker, target, timedOut);
-        confirmDoomOriginal(pending);
+        if (gameState.status !== 'ENDED' && !requeuePreviousRescue(pending)) confirmDoomOriginal(pending);
         return;
       }
       gameState.pendingRescue = null;
@@ -1831,10 +1969,13 @@
         addLog(`${target.nickname} 获救后继续摸 ${drawn} 张牌。`);
         persistGame();
         render();
+        if (pending.previousRescue && gameState.status === 'PLAYING') {
+          if (!requeuePreviousRescue(pending)) confirmDoomOriginal(pending);
+        }
         return;
       }
       if (pending.previousRescue) {
-        confirmDoomOriginal(pending);
+        if (!requeuePreviousRescue(pending)) confirmDoomOriginal(pending);
         return;
       }
       if (gameState.pendingAttack) {
@@ -1849,6 +1990,19 @@
       }
       persistGame();
       render();
+    }
+    function requeuePreviousRescue(pending) {
+      if (!pending?.previousRescue || pending.reason === '玉石俱焚' || gameState.status !== 'PLAYING') return false;
+      const previous = pending.previousRescue;
+      const previousTarget = gameState.players.find((player) => player.id === previous.targetId);
+      if (!previousTarget?.alive) return false;
+      gameState.pendingRescue = previous;
+      gameState.phase = 'DYING';
+      gameState.responseDeadline = Date.now() + RESPONSE_MS;
+      addLog(`${previousTarget.nickname} 仍在濒死状态，可继续使用奶自救。`);
+      persistGame();
+      render();
+      return true;
     }
     function confirmDoomOriginal(pending) {
       if (!pending?.previousRescue || gameState.status === 'ENDED') return;
@@ -2153,6 +2307,9 @@
     function tick() {
       if (!gameState || gameState.status === 'ENDED') { ui.timerText.textContent = '--'; return; }
       const deadline = gameState.phase === 'DRAWING' ? gameState.drawDeadline : (gameState.phase === 'RESPONSE' || gameState.phase === 'DYING') ? gameState.responseDeadline : gameState.turnDeadline;
+      const hostPlayer = (roomData?.players || []).find((player) => player.role === 'host') || (roomData?.players || [])[0];
+      const isHostClient = Boolean(hostPlayer && hostPlayer.id === roomSession.playerId);
+      const deadlinePassed = Boolean(deadline && Date.now() >= deadline);
       const phaseRemaining = gameState.phase === 'DRAWING' ? `摸牌 ${formatRemaining((gameState.drawDeadline || Date.now()) - Date.now())}` : deadline ? formatRemaining(deadline - Date.now()) : '--';
       ui.timerText.textContent = gameState.matchDeadline ? `总时长 ${formatRemaining(gameState.matchDeadline - Date.now())}` : phaseRemaining;
       if (gameState.matchDeadline && Date.now() >= gameState.matchDeadline && !['DRAWING', 'RESPONSE', 'DYING'].includes(gameState.phase)) {
@@ -2161,7 +2318,8 @@
       }
       if (gameState.phase === 'DRAWING' && deadline && Date.now() >= deadline) {
         const drawingPlayer = gameState.players.find((player) => player.id === gameState.drawPlayerId);
-        const mayFinishDraw = drawingPlayer?.id === roomSession.playerId || drawingPlayer?.isDemo;
+        const mayFinishDraw = drawingPlayer?.id === roomSession.playerId || drawingPlayer?.isDemo
+          || (isHostClient && deadlinePassed && drawingPlayer && !drawingPlayer.isDemo);
         if (mayFinishDraw) {
           if (gameState.skipPlayRound === gameState.round) {
             gameState.phase = 'DISCARD';
@@ -2184,10 +2342,14 @@
         const responseTarget = gameState.pendingAttack && gameState.players.find((player) => player.id === gameState.pendingAttack.targetId);
         const spellTarget = gameState.pendingSpell && gameState.players.find((player) => player.id === gameState.pendingSpell.currentTargetId);
         const rescueTarget = gameState.pendingRescue && gameState.players.find((player) => player.id === gameState.pendingRescue.targetId);
-        const mayResolveResponse = responseTarget?.id === roomSession.playerId || responseTarget?.isDemo;
-        const mayResolveSpell = spellTarget?.id === roomSession.playerId || spellTarget?.isDemo;
-        const mayResolveRescue = rescueTarget?.id === roomSession.playerId || rescueTarget?.isDemo;
-        const mayResolveTurn = current()?.id === roomSession.playerId || current()?.isDemo;
+        const mayResolveResponse = responseTarget?.id === roomSession.playerId || responseTarget?.isDemo
+          || (isHostClient && deadlinePassed && responseTarget && !responseTarget.isDemo);
+        const mayResolveSpell = spellTarget?.id === roomSession.playerId || spellTarget?.isDemo
+          || (isHostClient && deadlinePassed && spellTarget && !spellTarget.isDemo);
+        const mayResolveRescue = rescueTarget?.id === roomSession.playerId || rescueTarget?.isDemo
+          || (isHostClient && deadlinePassed && rescueTarget && !rescueTarget.isDemo);
+        const mayResolveTurn = current()?.id === roomSession.playerId || current()?.isDemo
+          || (isHostClient && deadlinePassed && current() && !current().isDemo);
         if (gameState.phase === 'RESPONSE' && mayResolveResponse) resolveAttack(false, true);
         else if (gameState.phase === 'RESPONSE' && mayResolveSpell && gameState.pendingSpell) {
           const pending = gameState.pendingSpell;
@@ -2219,6 +2381,7 @@
       else if (selected?.type === 'death-god') useDeathGodCard();
       else if (selected?.type === 'steal') useStealCard();
       else if (selected?.type === 'love-god') useLoveGodCard();
+      else if (selected?.type === 'special') useSpecialCard();
       else if (selected?.type === 'judgment') useJudgmentCard();
       else if (selected?.type === 'divine-punish') useDivinePunishCard();
       else if (selected?.type === 'mutual-doom' && gameState.phase === 'DYING') {
@@ -2255,6 +2418,7 @@
       refreshPlayerHeroes(roomData);
       currentPlayer = gameState.players.find((player) => player.id === roomSession.playerId) || gameState.players[0];
       render();
+      startGameLoop();
     }
 
     function startGameLoop() {
@@ -2277,20 +2441,25 @@
       }
       ui.notice.textContent = '正在等待房主创建对局状态...';
       setTimeout(() => {
-        if (!gameState) tryStartGame();
+        tryStartGame();
       }, 650);
     }
 
     if (!roomSession || !/^\d{6}$/.test(roomSession.roomCode)) {
       window.location.replace('lobby.html');
-    } else if (!roomHasReadyHeroes(getRooms()[roomSession.roomCode])) {
-      window.location.replace('customize.html');
     } else {
-      window.addEventListener('storage', (event) => {
-        if (event.key !== roomStorageKey) return;
-        handleRemoteGameUpdate();
-      });
-      tryStartGame();
+      const entryRoom = getRooms()[roomSession.roomCode];
+      if (entryRoom?.phase === 'SELECTING') {
+        window.location.replace('select.html');
+      } else if (entryRoom?.phase !== 'PLAYING' || !roomHasReadyHeroes(entryRoom)) {
+        window.location.replace('customize.html');
+      } else {
+        window.addEventListener('storage', (event) => {
+          if (event.key !== roomStorageKey) return;
+          handleRemoteGameUpdate();
+        });
+        tryStartGame();
+      }
     }
   </script>
 </body>

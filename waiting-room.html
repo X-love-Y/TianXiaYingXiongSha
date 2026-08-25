@@ -453,7 +453,7 @@
             <p class="eyebrow">等待其他玩家加入</p>
             <h1 id="waiting-title">房间等待大厅</h1>
           </div>
-          <p class="player-count"><strong id="playerCount">1</strong>/ 2 位玩家</p>
+          <p class="player-count"><strong id="playerCount">1</strong>/ 4 位玩家</p>
         </div>
 
         <div class="seats" id="seats"></div>
@@ -519,7 +519,7 @@
   <script>
     const roomStorageKey = 'heroKillLocalRooms';
     const sessionStorageKey = 'heroKillRoomSession';
-    const maxPlayers = 2;
+    const maxPlayers = 4;
     let roomSession;
 
     try {
@@ -572,7 +572,7 @@
       }
 
       function createSeat(player, index) {
-        const seatNames = ['一', '二'];
+        const seatNames = ['一', '二', '三', '四'];
         const article = document.createElement('article');
         const avatar = document.createElement('div');
         const playerInfo = document.createElement('div');
@@ -686,7 +686,7 @@
             room.phase = 'CUSTOMIZING';
             room.startedAt = Date.now();
             saveRooms(rooms);
-            showToast('两名玩家已就绪，正在进入卡牌定制。');
+            showToast('四名玩家已就绪，正在进入卡牌定制。');
             setTimeout(() => {
               window.location.href = 'customize.html';
             }, 420);

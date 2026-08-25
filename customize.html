@@ -212,6 +212,117 @@
       font-weight: 700;
     }
 
+    .review-card {
+      min-height: 0;
+    }
+
+    .review-row {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 2px 10px;
+      align-items: baseline;
+      padding: 7px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    .review-row:last-of-type {
+      border-bottom: none;
+    }
+
+    .review-row > span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .review-row strong {
+      color: var(--gold-light);
+      font-size: 14px;
+    }
+
+    .review-row small {
+      grid-column: 2;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .review-flavor {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .generating-panel {
+      display: grid;
+      justify-items: center;
+      gap: 14px;
+      margin: 40px auto 0;
+      padding: 46px 34px;
+      max-width: 640px;
+      text-align: center;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015)),
+        var(--surface-soft);
+      border: 1px solid var(--line);
+      border-top-color: rgba(215, 180, 102, 0.35);
+      border-radius: 8px;
+      box-shadow: 0 22px 60px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(10px);
+    }
+
+    .generating-title {
+      color: var(--gold-light);
+      font-family: SimSun, STSong, serif;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .generating-sub {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .generating-spinner {
+      width: 42px;
+      height: 42px;
+      border: 3px solid rgba(217, 183, 109, 0.25);
+      border-top-color: var(--gold-light);
+      border-radius: 50%;
+      animation: generating-spin 900ms linear infinite;
+    }
+
+    @keyframes generating-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 10px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 5px;
+    }
+
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--red), var(--gold));
+      border-radius: 5px;
+      transition: width 300ms ease;
+    }
+
+    .generating-count {
+      color: var(--gold-light);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .generating-tip {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     input,
     textarea {
       width: 100%;
@@ -347,11 +458,20 @@
           <button class="submit-button sound-button" type="submit">提交定制</button>
         </div>
       </form>
+
+      <section class="generating-panel" id="generatingPanel" hidden aria-live="polite">
+        <div class="generating-title">AI 英雄卡牌工坊</div>
+        <div class="generating-sub">正在为玩家制作英雄卡，请勿关闭页面…</div>
+        <div class="generating-spinner" aria-hidden="true"></div>
+        <div class="progress-track"><div class="progress-fill" id="generatingProgress"></div></div>
+        <p class="generating-count" id="generatingCount">已完成 0 / 20 张</p>
+        <p class="generating-tip">AI 正在理解人物描述并从技能库中匹配主技能、副技能与特技。</p>
+      </section>
     </main>
 
     <footer class="footer">
       <span>AI 生成 · 服务端规则校验</span>
-      <span>测试阶段 · 每名玩家 1 张英雄卡</span>
+      <span>测试阶段 · 每名玩家 5 张英雄卡</span>
     </footer>
   </div>
 
@@ -362,7 +482,7 @@
   <script>
     const roomStorageKey = 'heroKillLocalRooms';
     const sessionStorageKey = 'heroKillRoomSession';
-    const cardCount = 1;
+    const cardCount = 5;
     let roomSession;
 
     try {
@@ -396,6 +516,10 @@
       return room?.heroGeneration?.status === 'READY'
         && Boolean(room?.players?.length)
         && room.players.every((roomPlayer) => room.generatedHeroes?.[roomPlayer.id]);
+    }
+
+    function allConfirmed(room) {
+      return Boolean(room?.players?.length) && room.players.every((roomPlayer) => room.confirmations?.[roomPlayer.id]);
     }
 
     async function submitCustomization(roomCode, playerId, cards) {
@@ -449,6 +573,26 @@
       return article;
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+
+    function renderReviewCards(heroes) {
+      return heroes.map((hero, index) => `
+        <article class="card review-card">
+          <div class="card-head">
+            <span class="card-title">${escapeHtml(hero.heroName)}</span>
+            <span class="card-number">${String(index + 1).padStart(2, '0')}</span>
+          </div>
+          <div class="review-row"><span>血量</span><strong>${hero.maxHp || (2 + (hero.maxHpBonus || 0))}</strong></div>
+          <div class="review-row"><span>主技能</span><strong>${escapeHtml(hero.primarySkill?.name || '')}</strong><small>${escapeHtml(hero.primarySkill?.description || '')}</small></div>
+          <div class="review-row"><span>副技能</span><strong>${escapeHtml(hero.secondarySkill?.name || '')}</strong><small>${escapeHtml(hero.secondarySkill?.description || '')}</small></div>
+          <div class="review-row"><span>特技</span><strong>${escapeHtml(hero.specialSkill?.name || '')}</strong><small>${escapeHtml(hero.specialSkill?.description || '')}</small></div>
+          <p class="review-flavor">${escapeHtml(hero.flavorText || '')}</p>
+        </article>
+      `).join('');
+    }
+
     if (!roomSession || !/^\d{6}$/.test(roomSession.roomCode)) {
       window.location.replace('lobby.html');
     } else {
@@ -461,19 +605,35 @@
         window.location.replace('lobby.html');
       } else {
         const submitButton = document.querySelector('.submit-button');
+        const hintEl = document.getElementById('playerHint');
+        const cardsEl = document.getElementById('cards');
+        const customizeForm = document.getElementById('customizeForm');
+        const generatingPanel = document.getElementById('generatingPanel');
+        const generatingProgress = document.getElementById('generatingProgress');
+        const generatingCount = document.getElementById('generatingCount');
         const savedCards = room.customizations?.[roomSession.playerId]?.cards || [];
         document.getElementById('roomCode').textContent = roomSession.roomCode;
         document.getElementById('connectionText').textContent = `${player.nickname} · 卡牌定制`;
-        document.getElementById('playerHint').textContent = `${player.nickname}，填写 1 张英雄卡后提交，等待所有玩家完成。`;
 
-        const cards = document.getElementById('cards');
-        for (let index = 0; index < cardCount; index += 1) {
-          cards.appendChild(createCard(index, savedCards[index]));
+        function showGenerating(completed, total) {
+          customizeForm.hidden = true;
+          generatingPanel.hidden = false;
+          const percent = total ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+          generatingProgress.style.width = `${percent}%`;
+          generatingCount.textContent = `已完成 ${completed} / ${total} 张`;
         }
 
-        document.querySelectorAll('.sound-button').forEach((button) => {
-          button.addEventListener('click', playSound);
-        });
+        function hideGenerating() {
+          customizeForm.hidden = false;
+          generatingPanel.hidden = true;
+        }
+
+        function renderForm() {
+          cardsEl.replaceChildren();
+          for (let index = 0; index < cardCount; index += 1) {
+            cardsEl.appendChild(createCard(index, savedCards[index]));
+          }
+        }
 
         function enterGame() {
           if (enterGame.started) return;
@@ -483,45 +643,147 @@
           setTimeout(() => { window.location.href = 'game.html'; }, 220);
         }
 
+        function enterSelect() {
+          if (enterSelect.started) return;
+          enterSelect.started = true;
+          submitButton.disabled = true;
+          submitButton.textContent = '正在进入选将';
+          setTimeout(() => { window.location.href = 'select.html'; }, 220);
+        }
+
+        async function confirmHeroes() {
+          if (confirmHeroes.running) return;
+          confirmHeroes.running = true;
+          submitButton.disabled = true;
+          submitButton.textContent = '正在确认';
+          try {
+            const response = await fetch(`/api/rooms/${roomSession.roomCode}/confirmations`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ playerId: roomSession.playerId })
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.message || `确认失败：${response.status}`);
+            const latestRooms = getRooms();
+            latestRooms[roomSession.roomCode] = payload.room;
+            localStorage.setItem(roomStorageKey, JSON.stringify(latestRooms));
+            reflectRoomProgress(payload.room);
+            showToast('已确认，等待其他玩家确认。');
+          } catch (error) {
+            submitButton.disabled = false;
+            submitButton.textContent = '确认英雄';
+            try {
+              if (window.HeroKillNet) await HeroKillNet.loadRooms();
+              const latestRoom = getRooms()[roomSession.roomCode];
+              if (latestRoom) {
+                const latestRooms = getRooms();
+                latestRooms[roomSession.roomCode] = latestRoom;
+                localStorage.setItem(roomStorageKey, JSON.stringify(latestRooms));
+                reflectRoomProgress(latestRoom);
+              }
+            } catch (syncError) {
+              // 忽略同步失败
+            }
+            if (submitButton.textContent !== '已确认' && !submitButton.onclick) {
+              submitButton.disabled = false;
+              submitButton.textContent = '确认英雄';
+              showToast(error.message || '确认失败，请稍后重试。');
+            }
+          } finally {
+            confirmHeroes.running = false;
+          }
+        }
+
         function reflectRoomProgress(roomSnapshot) {
           if (!roomSnapshot) return;
-          if (allHeroesReady(roomSnapshot)) {
-            enterGame();
+          if (roomSnapshot.phase === 'PLAYING') {
+            // 新流程：finalHeroes 就绪即进对局；旧版/兼容场景：英雄已就绪也直接进对局
+            if (roomSnapshot.finalHeroes || allHeroesReady(roomSnapshot)) {
+              enterGame();
+              return;
+            }
+          }
+          if (roomSnapshot.phase === 'SELECTING') {
+            enterSelect();
             return;
           }
-          const submittedCount = roomSnapshot.players.filter((roomPlayer) => roomSnapshot.customizations?.[roomPlayer.id]?.cards?.length === cardCount).length;
+          if (roomSnapshot.phase === 'REVIEWING' || roomSnapshot.heroGeneration?.status === 'READY') {
+            const myHeroes = roomSnapshot.generatedHeroes?.[roomSession.playerId];
+            if (Array.isArray(myHeroes) && myHeroes.length === 5) {
+              hideGenerating();
+              cardsEl.innerHTML = renderReviewCards(myHeroes);
+              const selfConfirmed = Boolean(roomSnapshot.confirmations?.[roomSession.playerId]);
+              if (selfConfirmed) {
+                hintEl.textContent = '你已确认这 5 张英雄卡，等待其他玩家确认后进入选将。';
+                submitButton.disabled = true;
+                submitButton.textContent = '已确认';
+                submitButton.onclick = null;
+              } else {
+                hintEl.textContent = `${player.nickname}，请确认 AI 为你制作的 5 张英雄卡；确认后系统将洗乱全部 20 张随机分发。`;
+                submitButton.disabled = false;
+                submitButton.textContent = '确认英雄';
+                submitButton.onclick = confirmHeroes;
+              }
+              return;
+            }
+          }
+          submitButton.onclick = null;
+          hideGenerating();
+          if (!cardsEl.querySelector('input')) renderForm();
+          const submittedCount = roomSnapshot.players.filter((roomPlayer) => Boolean(roomSnapshot.customizations?.[roomPlayer.id]?.submittedAt)).length;
           const remainingCount = roomSnapshot.players.length - submittedCount;
-          const selfSubmitted = roomSnapshot.customizations?.[roomSession.playerId]?.cards?.length === cardCount;
+          const selfSubmitted = Boolean(roomSnapshot.customizations?.[roomSession.playerId]?.submittedAt);
           if (roomSnapshot.heroGeneration?.status === 'RUNNING') {
             const completed = roomSnapshot.heroGeneration.completedCount || 0;
-            const total = roomSnapshot.heroGeneration.totalCount || roomSnapshot.players.length;
-            document.getElementById('playerHint').textContent = `AI 正在理解人物并匹配技能，已完成 ${completed}/${total} 张。`;
-            submitButton.disabled = true;
-            submitButton.textContent = 'AI 正在生成';
+            const total = roomSnapshot.heroGeneration.totalCount || roomSnapshot.players.length * cardCount;
+            showGenerating(completed, total);
             return;
           }
           if (roomSnapshot.heroGeneration?.status === 'FAILED') {
-            document.getElementById('playerHint').textContent = roomSnapshot.heroGeneration.message || '生成失败，请重新提交。';
+            hintEl.textContent = roomSnapshot.heroGeneration.message || '生成失败，请重新提交。';
             submitButton.disabled = false;
             submitButton.textContent = '重新提交';
             return;
           }
           if (selfSubmitted) {
-            document.getElementById('playerHint').textContent = `${player.nickname} 已提交，等待 ${remainingCount} 名玩家完成定制。`;
+            hintEl.textContent = `${player.nickname} 已提交，等待 ${remainingCount} 名玩家完成定制。`;
             submitButton.disabled = true;
             submitButton.textContent = '等待其他玩家';
           } else {
-            document.getElementById('playerHint').textContent = `已有 ${submittedCount}/${roomSnapshot.players.length} 名玩家提交，请完成你的定制。`;
+            hintEl.textContent = `已有 ${submittedCount}/${roomSnapshot.players.length} 名玩家提交，请完成你的 5 张英雄卡。`;
             submitButton.disabled = false;
             submitButton.textContent = '提交定制';
           }
         }
 
-        if (room.phase === 'PLAYING' && allHeroesReady(room)) enterGame();
-        else if (savedCards.length === cardCount) reflectRoomProgress(room);
+        document.querySelectorAll('.sound-button').forEach((button) => {
+          button.addEventListener('click', playSound);
+        });
 
-        document.getElementById('customizeForm').addEventListener('submit', async (event) => {
+        if (room.phase === 'PLAYING' && (room.finalHeroes || allHeroesReady(room))) enterGame();
+        else if (room.phase === 'SELECTING') enterSelect();
+        else if (room.phase === 'REVIEWING' && Array.isArray(room.generatedHeroes?.[roomSession.playerId]) && room.generatedHeroes[roomSession.playerId].length === 5) reflectRoomProgress(room);
+        else {
+          renderForm();
+          reflectRoomProgress(room);
+        }
+
+        // 主动同步服务器最新房间状态，避免本地 localStorage 滞后导致计数/阶段显示错误
+        if (window.HeroKillNet) {
+          HeroKillNet.loadRooms()
+            .then(() => {
+              const latestRoom = getRooms()[roomSession.roomCode];
+              if (latestRoom) reflectRoomProgress(latestRoom);
+            })
+            .catch(() => {});
+        }
+
+        customizeForm.addEventListener('submit', async (event) => {
           event.preventDefault();
+          if (submitButton.onclick) {
+            submitButton.onclick();
+            return;
+          }
           if (!event.currentTarget.reportValidity()) return;
 
           const formData = new FormData(event.currentTarget);
@@ -543,9 +805,25 @@
             reflectRoomProgress(payload.room);
             showToast(payload.generationStarted ? '全员已提交，AI 开始生成英雄。' : '英雄资料已提交。');
           } catch (error) {
-            submitButton.disabled = false;
-            submitButton.textContent = '提交定制';
-            showToast(error.message || '提交失败，请稍后重试。');
+            // 服务端可能已进入生成/确认/选将/对局阶段（本地状态滞后）。
+            // 先同步服务器状态并重新渲染，避免停留在表单反复提交 409。
+            try {
+              if (window.HeroKillNet) await HeroKillNet.loadRooms();
+              const latestRoom = getRooms()[roomSession.roomCode];
+              if (latestRoom) {
+                const latestRooms = getRooms();
+                latestRooms[roomSession.roomCode] = latestRoom;
+                localStorage.setItem(roomStorageKey, JSON.stringify(latestRooms));
+                reflectRoomProgress(latestRoom);
+              }
+            } catch (syncError) {
+              // 同步失败时保留原错误提示
+            }
+            if (!submitButton.onclick) {
+              submitButton.disabled = false;
+              submitButton.textContent = '提交定制';
+              showToast(error.message || '提交失败，请稍后重试。');
+            }
           }
         });
 

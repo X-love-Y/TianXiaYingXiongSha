@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>选将 - 天下英雄杀</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #080b14;
+      --surface: rgba(9, 13, 23, 0.91);
+      --surface-soft: rgba(19, 25, 38, 0.78);
+      --line: rgba(218, 227, 246, 0.18);
+      --line-bright: rgba(225, 233, 250, 0.4);
+      --text: #f1f3f7;
+      --muted: #a9b1c1;
+      --gold: #d7b466;
+      --gold-light: #f0d18a;
+      --red: #9b403b;
+      --green: #81aaa0;
+      --blue: #6f9daf;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; min-height: 100%; }
+    body {
+      min-width: 1000px;
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--text);
+      background: var(--ink);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    button, input { font: inherit; color: inherit; }
+    .scene {
+      position: fixed; inset: 0; z-index: -2;
+      background: url("imlobby.png") center / cover no-repeat;
+      transform: scale(1.015);
+    }
+    .scene::after {
+      content: "";
+      position: absolute; inset: 0;
+      background:
+        linear-gradient(90deg, rgba(4, 7, 14, 0.66), rgba(4, 7, 14, 0.34) 44%, rgba(4, 7, 14, 0.78)),
+        linear-gradient(0deg, rgba(3, 5, 11, 0.78), transparent 52%);
+    }
+    .shell {
+      width: min(1240px, calc(100% - 64px));
+      min-height: 100vh;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: 26px 0 22px;
+    }
+    .topbar, .footer {
+      display: flex; align-items: center; justify-content: space-between; gap: 24px;
+    }
+    .topbar { padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+    .brand { font-family: SimSun, STSong, serif; color: var(--gold-light); font-size: 23px; font-weight: 700; }
+    .connection { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; }
+    .connection-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px rgba(129, 170, 160, 0.7); }
+    .main { padding: 30px 0; }
+    .hero-panel {
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 30px;
+      margin-bottom: 22px; padding: 28px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-top-color: var(--line-bright);
+      border-radius: 6px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(10px);
+    }
+    .eyebrow { margin-bottom: 7px; color: var(--gold); font-size: 12px; }
+    h1 { font-family: SimSun, STSong, serif; font-size: 30px; line-height: 1.2; }
+    .panel-copy { margin-top: 10px; max-width: 640px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .room-code { color: var(--gold-light); font-family: Consolas, "Courier New", monospace; font-size: 30px; line-height: 1; white-space: nowrap; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .card {
+      min-height: 480px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 12px;
+      padding: 18px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015)), var(--surface-soft);
+      border: 1px solid var(--line);
+      border-top-color: rgba(215, 180, 102, 0.35);
+      border-radius: 6px;
+      box-shadow: 0 18px 52px rgba(0, 0, 0, 0.34);
+      backdrop-filter: blur(10px);
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .card.main {
+      border-color: rgba(217, 183, 109, 0.85);
+      box-shadow: 0 0 0 2px rgba(217, 183, 109, 0.22), 0 18px 52px rgba(0, 0, 0, 0.4);
+    }
+    .card.secondary {
+      border-color: rgba(111, 157, 175, 0.85);
+      box-shadow: 0 0 0 2px rgba(111, 157, 175, 0.22), 0 18px 52px rgba(0, 0, 0, 0.4);
+    }
+    .card-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding-bottom: 12px; border-bottom: 1px solid var(--line);
+    }
+    .card-title { color: var(--gold-light); font-family: SimSun, STSong, serif; font-size: 18px; font-weight: 700; }
+    .card-number { color: var(--muted); font-size: 12px; }
+    .review-row {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 2px 10px;
+      align-items: baseline;
+      padding: 6px 0;
+      border-bottom: 1px dashed var(--line);
+    }
+    .review-row > span { color: var(--muted); font-size: 12px; }
+    .review-row strong { color: var(--gold-light); font-size: 14px; }
+    .review-row small { grid-column: 2; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .review-flavor { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .pick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .pick-button {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      cursor: pointer;
+      background: rgba(233, 239, 248, 0.06);
+    }
+    .pick-button:hover:not(:disabled) { background: rgba(233, 239, 248, 0.14); }
+    .pick-button.main { border-color: rgba(217, 183, 109, 0.65); color: var(--gold-light); }
+    .pick-button.secondary { border-color: rgba(111, 157, 175, 0.65); color: #cfe1eb; }
+    .pick-button:disabled { cursor: not-allowed; opacity: 0.45; }
+    .actions {
+      display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+      margin-top: 22px; padding: 18px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      backdrop-filter: blur(10px);
+    }
+    .hint { margin-right: auto; color: var(--muted); font-size: 13px; }
+    .submit-button {
+      min-width: 170px; min-height: 46px;
+      border-radius: 4px;
+      cursor: pointer;
+      background: var(--red);
+      border: 1px solid rgba(238, 173, 143, 0.46);
+      font-weight: 700;
+    }
+    .submit-button:hover:not(:disabled), .submit-button:focus-visible { background: #aa4842; outline: none; }
+    .submit-button:disabled { cursor: not-allowed; opacity: 0.55; }
+    .toast {
+      position: fixed; left: 50%; bottom: 28px; z-index: 10;
+      width: min(460px, calc(100% - 32px));
+      padding: 13px 18px;
+      background: rgba(8, 12, 20, 0.96);
+      border: 1px solid var(--line-bright);
+      border-radius: 4px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+      text-align: center;
+      transform: translate(-50%, 20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+    .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+    @media (max-width: 1180px) {
+      .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="scene" aria-hidden="true"></div>
+
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">天下英雄杀</div>
+      <div class="connection">
+        <span class="connection-dot" aria-hidden="true"></span>
+        <span id="connectionText">选将</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="hero-panel" aria-labelledby="select-title">
+        <div>
+          <p class="eyebrow">选将阶段</p>
+          <h1 id="select-title">从随机分发的 5 张英雄卡中选将</h1>
+          <p class="panel-copy">选择 1 张作为主将（获得其血量和主技能），再选 1 张作为副将（仅获得其副技能）。其余 3 张英雄卡将转化为特技牌加入牌堆。</p>
+        </div>
+        <strong class="room-code" id="roomCode">------</strong>
+      </section>
+
+      <section class="cards" id="cards" aria-label="候选英雄"></section>
+
+      <div class="actions">
+        <p class="hint" id="playerHint">先选主将，再选副将。</p>
+        <button class="submit-button sound-button" id="submitButton" type="button" disabled>提交选择</button>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span>随机分发 · 与设计者无关</span>
+      <span>未选中的 12 张英雄卡将作为特技牌进入牌堆</span>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <audio id="buttonSound" src="按钮声音.mp3" preload="auto"></audio>
+  <script src="network.js"></script>
+
+  <script>
+    const roomStorageKey = 'heroKillLocalRooms';
+    const sessionStorageKey = 'heroKillRoomSession';
+    let roomSession;
+
+    try {
+      roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey));
+    } catch {
+      roomSession = null;
+    }
+
+    function getRooms() {
+      try {
+        return JSON.parse(localStorage.getItem(roomStorageKey)) || {};
+      } catch {
+        return {};
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+
+    if (!roomSession || !/^\d{6}$/.test(roomSession.roomCode)) {
+      window.location.replace('lobby.html');
+    } else {
+      const sound = document.getElementById('buttonSound');
+      const cardsEl = document.getElementById('cards');
+      const hintEl = document.getElementById('playerHint');
+      const submitButton = document.getElementById('submitButton');
+      let roomData;
+      let myHeroes = [];
+      let mainHeroId = null;
+      let secondaryHeroId = null;
+      let submitted = false;
+      let toastTimer;
+
+      function playSound() {
+        sound.currentTime = 0;
+        sound.play().catch(() => {});
+      }
+
+      function showToast(message) {
+        clearTimeout(toastTimer);
+        toast.textContent = message;
+        toast.classList.add('visible');
+        toastTimer = setTimeout(() => toast.classList.remove('visible'), 2600);
+      }
+
+      function allPicked(room) {
+        return Boolean(room?.players?.length) && room.players.every((roomPlayer) => room.picks?.[roomPlayer.id]?.mainHeroId);
+      }
+
+      function renderCards() {
+        cardsEl.innerHTML = myHeroes.map((hero, index) => {
+          const isMain = hero.id === mainHeroId;
+          const isSecondary = hero.id === secondaryHeroId;
+          const roleClass = isMain ? ' main' : isSecondary ? ' secondary' : '';
+          const roleLabel = isMain ? '主将' : isSecondary ? '副将' : '';
+          return `
+            <article class="card${roleClass}" data-hero-id="${hero.id}">
+              <div class="card-head">
+                <span class="card-title">${escapeHtml(hero.heroName)}${roleLabel ? `（${roleLabel}）` : ''}</span>
+                <span class="card-number">${String(index + 1).padStart(2, '0')}</span>
+              </div>
+              <div class="review-row"><span>血量</span><strong>${hero.maxHp || (2 + (hero.maxHpBonus || 0))}</strong></div>
+              <div class="review-row"><span>主技能</span><strong>${escapeHtml(hero.primarySkill?.name || '')}</strong><small>${escapeHtml(hero.primarySkill?.description || '')}</small></div>
+              <div class="review-row"><span>副技能</span><strong>${escapeHtml(hero.secondarySkill?.name || '')}</strong><small>${escapeHtml(hero.secondarySkill?.description || '')}</small></div>
+              <div class="review-row"><span>特技</span><strong>${escapeHtml(hero.specialSkill?.name || '')}</strong><small>${escapeHtml(hero.specialSkill?.description || '')}</small></div>
+              <p class="review-flavor">${escapeHtml(hero.flavorText || '')}</p>
+              <div class="pick-actions">
+                <button class="pick-button main sound-button" type="button" data-pick="main" ${isMain ? 'disabled' : ''}>选为主将</button>
+                <button class="pick-button secondary sound-button" type="button" data-pick="secondary" ${isSecondary ? 'disabled' : ''}>选为副将</button>
+              </div>
+            </article>
+          `;
+        }).join('');
+
+        cardsEl.querySelectorAll('[data-pick]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const heroId = button.closest('.card').dataset.heroId;
+            if (button.dataset.pick === 'main') {
+              mainHeroId = mainHeroId === heroId ? null : heroId;
+              if (secondaryHeroId === heroId) secondaryHeroId = null;
+            } else {
+              secondaryHeroId = secondaryHeroId === heroId ? null : heroId;
+              if (mainHeroId === heroId) mainHeroId = null;
+            }
+            submitted = false;
+            updateState();
+            renderCards();
+            playSound();
+          });
+        });
+      }
+
+      function updateState() {
+        if (submitted) {
+          submitButton.disabled = true;
+          submitButton.textContent = '已提交';
+          return;
+        }
+        submitButton.disabled = !(mainHeroId && secondaryHeroId && mainHeroId !== secondaryHeroId);
+        if (mainHeroId && secondaryHeroId) {
+          hintEl.textContent = '已选主将与副将，可以提交。';
+        } else if (mainHeroId) {
+          hintEl.textContent = '已选主将，请再选择一张作为副将（仅获得其副技能）。';
+        } else {
+          hintEl.textContent = '先选择一张英雄卡作为主将（获得其血量和主技能）。';
+        }
+      }
+
+      function enterGame() {
+        if (enterGame.started) return;
+        enterGame.started = true;
+        submitButton.disabled = true;
+        submitButton.textContent = '正在进入对局';
+        setTimeout(() => { window.location.href = 'game.html'; }, 220);
+      }
+
+      function reflectRoom(roomSnapshot) {
+        if (!roomSnapshot) return;
+        if (roomSnapshot.phase === 'PLAYING' && roomSnapshot.finalHeroes) {
+          enterGame();
+          return;
+        }
+        if (roomSnapshot.phase !== 'SELECTING') {
+          window.location.replace('customize.html');
+          return;
+        }
+        myHeroes = roomSnapshot.dealtHands?.[roomSession.playerId] || [];
+        if (!myHeroes.length) return;
+        const savedPick = roomSnapshot.picks?.[roomSession.playerId];
+        if (savedPick) {
+          submitted = true;
+          mainHeroId = savedPick.mainHeroId || null;
+          secondaryHeroId = savedPick.secondaryHeroId || null;
+        } else {
+          submitted = false;
+        }
+        document.getElementById('roomCode').textContent = roomSnapshot.roomCode;
+        document.getElementById('connectionText').textContent = '选将 · ' + (roomSnapshot.players.find((p) => p.id === roomSession.playerId)?.nickname || '');
+        if (savedPick) {
+          hintEl.textContent = '你已完成选将，等待其他玩家选择。';
+          submitButton.disabled = true;
+          submitButton.textContent = '已提交';
+        }
+        renderCards();
+        updateState();
+      }
+
+      document.querySelectorAll('.sound-button').forEach((button) => {
+        button.addEventListener('click', playSound);
+      });
+
+      submitButton.addEventListener('click', async () => {
+        if (!mainHeroId || !secondaryHeroId || mainHeroId === secondaryHeroId) return;
+        submitButton.disabled = true;
+        submitButton.textContent = '正在提交';
+        try {
+          const response = await fetch(`/api/rooms/${roomSession.roomCode}/selections`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ playerId: roomSession.playerId, mainHeroId, secondaryHeroId })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.message || `提交失败：${response.status}`);
+          const latestRooms = getRooms();
+          latestRooms[roomSession.roomCode] = payload.room;
+          localStorage.setItem(roomStorageKey, JSON.stringify(latestRooms));
+          reflectRoom(payload.room);
+          showToast('选择已提交，等待其他玩家。');
+        } catch (error) {
+          try {
+            if (window.HeroKillNet) await HeroKillNet.loadRooms();
+            const latestRoom = getRooms()[roomSession.roomCode];
+            if (latestRoom) {
+              const latestRooms = getRooms();
+              latestRooms[roomSession.roomCode] = latestRoom;
+              localStorage.setItem(roomStorageKey, JSON.stringify(latestRooms));
+              reflectRoom(latestRoom);
+            }
+          } catch (syncError) {
+            // 忽略同步失败
+          }
+          if (!submitted) {
+            submitButton.disabled = false;
+            submitButton.textContent = '提交选择';
+            showToast(error.message || '提交失败，请稍后重试。');
+          }
+        }
+      });
+
+      window.addEventListener('storage', (event) => {
+        if (event.key !== roomStorageKey) return;
+        reflectRoom(getRooms()[roomSession.roomCode]);
+      });
+
+      roomData = getRooms()[roomSession.roomCode];
+      if (roomData?.phase === 'PLAYING' && roomData.finalHeroes) enterGame();
+      else reflectRoom(roomData);
+    }
+  </script>
+</body>
+</html>

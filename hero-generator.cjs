@@ -55,8 +55,62 @@ const SKILL_CATALOG = Object.freeze({
   })
 });
 
+// 特技技能库：特技牌为一次性主动效果（触发固定为 SPECIAL_CARD），
+// 测试阶段先提供少量效果，确保每张英雄卡的主/副/特技互不重复。
+const SPECIAL_CATALOG = Object.freeze({
+  SPECIAL_DAMAGE_2: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 5 }),
+    describe: () => '对一名其他玩家造成 2 点伤害'
+  }),
+  SPECIAL_AOE_1: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 5 }),
+    describe: () => '对所有其他玩家各造成 1 点伤害'
+  }),
+  SPECIAL_STEAL_CARD: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 4 }),
+    describe: () => '随机获得一名其他玩家的一张手牌'
+  }),
+  SPECIAL_SILENCE: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 4 }),
+    describe: () => '令一名其他玩家下个出牌阶段被沉默'
+  }),
+  SPECIAL_DRAW_3: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 4 }),
+    describe: () => '立即摸 3 张牌'
+  }),
+  SPECIAL_HEAL_2: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '恢复 2 点生命'
+  }),
+  SPECIAL_DISCARD_EQUIP: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '弃置一名其他玩家的一件装备'
+  }),
+  SPECIAL_SHIELD_2: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '本回合内自己受到的第一次伤害减少 2 点'
+  })
+});
+
 const PRIMARY_BUDGET = 5;
 const SECONDARY_BUDGET = 3;
+const SPECIAL_BUDGET = 5;
 const DEFAULT_MODEL = 'gpt-4.1-mini';
 const DEFAULT_API_BASE = 'https://api.openai.com/v1';
 
@@ -129,10 +183,21 @@ const SKILL_SCHEMA = {
   }
 };
 
+const SPECIAL_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['templateId', 'name', 'value'],
+  properties: {
+    templateId: { type: 'string', enum: Object.keys(SPECIAL_CATALOG) },
+    name: { type: 'string', minLength: 1, maxLength: 8 },
+    value: { type: 'integer', enum: [1] }
+  }
+};
+
 const HERO_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['title', 'characterTags', 'primarySkill', 'secondarySkill', 'flavorText', 'avatarSearchKeywords'],
+  required: ['title', 'characterTags', 'primarySkill', 'secondarySkill', 'specialSkill', 'flavorText', 'avatarSearchKeywords'],
   properties: {
     title: { type: 'string', minLength: 1, maxLength: 16 },
     characterTags: {
@@ -143,6 +208,7 @@ const HERO_SCHEMA = {
     },
     primarySkill: SKILL_SCHEMA,
     secondarySkill: SKILL_SCHEMA,
+    specialSkill: SPECIAL_SCHEMA,
     flavorText: { type: 'string', minLength: 1, maxLength: 40 },
     avatarSearchKeywords: {
       type: 'array',
@@ -165,6 +231,17 @@ const FALLBACK_SKILL_NAMES = Object.freeze({
   SLASH_DRAW: '追击补牌'
 });
 
+const FALLBACK_SPECIAL_NAMES = Object.freeze({
+  SPECIAL_DAMAGE_2: '天降神威',
+  SPECIAL_AOE_1: '横扫千军',
+  SPECIAL_STEAL_CARD: '顺手牵羊',
+  SPECIAL_SILENCE: '禁言咒',
+  SPECIAL_DRAW_3: '乾坤一掷',
+  SPECIAL_HEAL_2: '回春术',
+  SPECIAL_DISCARD_EQUIP: '卸甲令',
+  SPECIAL_SHIELD_2: '金钟罩'
+});
+
 const FALLBACK_SKILL_VALUES = Object.freeze({
   EXTRA_DRAW: 1,
   UNLIMITED_SLASH: 1,
@@ -175,6 +252,17 @@ const FALLBACK_SKILL_VALUES = Object.freeze({
   HEAL_PLUS: 1,
   DAMAGE_DRAW: 1,
   SLASH_DRAW: 1
+});
+
+const FALLBACK_SPECIAL_VALUES = Object.freeze({
+  SPECIAL_DAMAGE_2: 1,
+  SPECIAL_AOE_1: 1,
+  SPECIAL_STEAL_CARD: 1,
+  SPECIAL_SILENCE: 1,
+  SPECIAL_DRAW_3: 1,
+  SPECIAL_HEAL_2: 1,
+  SPECIAL_DISCARD_EQUIP: 1,
+  SPECIAL_SHIELD_2: 1
 });
 
 // 关键词 → 技能效果 的贴合度打分，值越高越符合人物描述。
@@ -212,6 +300,17 @@ const SKILL_NAME_POOLS = Object.freeze({
   SLASH_DRAW: ['{kw}追击', '{kw}连招', '{kw}补刀', '追击补牌', '乘胜追击', '愈战愈勇', '{kw}收割']
 });
 
+const SPECIAL_NAME_POOLS = Object.freeze({
+  SPECIAL_DAMAGE_2: ['{kw}神威', '{kw}怒击', '{kw}天罚', '天降神威', '雷霆万钧', '一击必杀', '{kw}之怒'],
+  SPECIAL_AOE_1: ['{kw}横扫', '{kw}旋风', '{kw}威压', '横扫千军', '八方风雨', '势不可挡', '{kw}领域'],
+  SPECIAL_STEAL_CARD: ['{kw}妙手', '{kw}顺手', '{kw}探囊', '顺手牵羊', '探囊取物', '隔空取物', '{kw}手气'],
+  SPECIAL_SILENCE: ['{kw}禁言', '{kw}封口', '{kw}闭目', '禁言咒', '噤若寒蝉', '言出法随', '{kw}之默'],
+  SPECIAL_DRAW_3: ['{kw}乾坤', '{kw}妙计', '{kw}灵感', '乾坤一掷', '妙手生花', '运筹帷幄', '{kw}之策'],
+  SPECIAL_HEAL_2: ['{kw}回春', '{kw}妙手', '{kw}圣光', '回春术', '妙手回春', '枯木逢春', '{kw}仁心'],
+  SPECIAL_DISCARD_EQUIP: ['{kw}卸甲', '{kw}破防', '{kw}瓦解', '卸甲令', '釜底抽薪', '兵不厌诈', '{kw}之击'],
+  SPECIAL_SHIELD_2: ['{kw}金钟', '{kw}铁壁', '{kw}守护', '金钟罩', '铜墙铁壁', '不动如山', '{kw}之盾']
+});
+
 function normalizeUsedNames(options = {}) {
   const values = [
     ...(Array.isArray(options.usedNames) ? options.usedNames : []),
@@ -230,10 +329,34 @@ function skillScoreFor(description, templateId) {
   return total;
 }
 
-function rankSkillsByDescription(description, budget, blockedSkillIds, avoidSkillIds = new Set()) {
-  return Object.keys(SKILL_CATALOG)
+function specialScoreFor(description, templateId) {
+  const text = ` ${String(description || '')} `.toLowerCase();
+  let total = 0;
+  const rules = [
+    { words: ['爆发', '重击', '力量', '凶猛', '暴击', '压制', '雷霆', '闪电', '一击', '猛攻', '伤害'], skill: 'SPECIAL_DAMAGE_2', score: 3 },
+    { words: ['群攻', '范围', '横扫', '威压', '气势', '大军', '千军', '领域'], skill: 'SPECIAL_AOE_1', score: 3 },
+    { words: ['偷', '窃', '盗', '顺手', '神偷', '骗子', '手快'], skill: 'SPECIAL_STEAL_CARD', score: 3 },
+    { words: ['沉默', '禁言', '封口', '话痨', '嘴碎', '吵闹'], skill: 'SPECIAL_SILENCE', score: 3 },
+    { words: ['谋略', '聪明', '运筹', '计划', '智慧', '研究', '知识'], skill: 'SPECIAL_DRAW_3', score: 3 },
+    { words: ['治疗', '医生', '奶', '恢复', '治愈', '温柔', '救护', '回血', '仁心'], skill: 'SPECIAL_HEAL_2', score: 3 },
+    { words: ['装备', '武器', '铠甲', '卸', '缴械', '夺'], skill: 'SPECIAL_DISCARD_EQUIP', score: 3 },
+    { words: ['防御', '盾', '守护', '铁壁', '挨打', '抗压', '不屈'], skill: 'SPECIAL_SHIELD_2', score: 3 }
+  ];
+  for (const rule of rules) {
+    if (rule.skill !== templateId) continue;
+    if (rule.words.some((word) => text.includes(word))) total += rule.score;
+  }
+  return total;
+}
+
+function catalogFor(templateId) {
+  return SKILL_CATALOG[templateId] || SPECIAL_CATALOG[templateId] || null;
+}
+
+function rankSkillsByDescription(description, budget, blockedSkillIds, avoidSkillIds = new Set(), catalog = SKILL_CATALOG) {
+  return Object.keys(catalog)
     .filter((templateId) => (
-      SKILL_CATALOG[templateId]
+      catalog[templateId]
       && !blockedSkillIds.has(templateId)
       && !avoidSkillIds.has(templateId)
       && canUseSkillWithinBudget(templateId, budget)
@@ -253,7 +376,7 @@ function extractNameKeyword(name, description) {
 }
 
 function composeSkillName(templateId, name, description, usedNames, preferKeyword = true) {
-  const pool = SKILL_NAME_POOLS[templateId] || ['神来之笔', '天生我才', '临场发挥', '一鸣惊人'];
+  const pool = SKILL_NAME_POOLS[templateId] || SPECIAL_NAME_POOLS[templateId] || ['神来之笔', '天生我才', '临场发挥', '一鸣惊人'];
   const keyword = extractNameKeyword(name, description);
   const candidates = [];
   const ordered = [...pool];
@@ -269,18 +392,18 @@ function composeSkillName(templateId, name, description, usedNames, preferKeywor
       candidates.push(entry);
     }
   }
-  candidates.push(FALLBACK_SKILL_NAMES[templateId]);
+  candidates.push(FALLBACK_SKILL_NAMES[templateId] || FALLBACK_SPECIAL_NAMES[templateId]);
   for (const candidate of candidates) {
     const finalName = candidate.slice(0, 8);
     if (!usedNames.has(finalName)) return finalName;
   }
   let suffix = 2;
   while (suffix < 99) {
-    const finalName = `${FALLBACK_SKILL_NAMES[templateId]}${suffix === 2 ? '·二' : suffix}`.slice(0, 8);
+    const finalName = `${FALLBACK_SKILL_NAMES[templateId] || FALLBACK_SPECIAL_NAMES[templateId]}${suffix === 2 ? '·二' : suffix}`.slice(0, 8);
     if (!usedNames.has(finalName)) return finalName;
     suffix += 1;
   }
-  return FALLBACK_SKILL_NAMES[templateId];
+  return FALLBACK_SKILL_NAMES[templateId] || FALLBACK_SPECIAL_NAMES[templateId];
 }
 
 function compactText(value, maxLength) {
@@ -302,25 +425,25 @@ function normalizeBlockedSkillIds(options = {}) {
     ...(Array.isArray(options.blockedSkillIds) ? options.blockedSkillIds : []),
     ...(Array.isArray(options.forbiddenSkillIds) ? options.forbiddenSkillIds : [])
   ];
-  return new Set(values.map((value) => compactText(value, 40)).filter((value) => SKILL_CATALOG[value]));
+  return new Set(values.map((value) => compactText(value, 40)).filter((value) => catalogFor(value)));
 }
 
 function canUseSkillWithinBudget(templateId, budget) {
-  const template = SKILL_CATALOG[templateId];
+  const template = catalogFor(templateId);
   return Boolean(template?.values?.some((value) => template.powerByValue[value] <= budget));
 }
 
 function fallbackValueFor(templateId, budget) {
-  const preferred = FALLBACK_SKILL_VALUES[templateId];
-  const template = SKILL_CATALOG[templateId];
+  const preferred = FALLBACK_SKILL_VALUES[templateId] ?? FALLBACK_SPECIAL_VALUES[templateId];
+  const template = catalogFor(templateId);
   if (template?.values?.includes(preferred) && template.powerByValue[preferred] <= budget) return preferred;
   return template?.values?.find((value) => template.powerByValue[value] <= budget);
 }
 
 function firstAllowedSkillId(candidates, blockedSkillIds, budget, avoidSkillIds = new Set()) {
-  const ordered = [...candidates, ...Object.keys(SKILL_CATALOG)];
+  const ordered = [...candidates, ...Object.keys(SKILL_CATALOG), ...Object.keys(SPECIAL_CATALOG)];
   return ordered.find((templateId) => (
-    SKILL_CATALOG[templateId]
+    catalogFor(templateId)
     && !blockedSkillIds.has(templateId)
     && !avoidSkillIds.has(templateId)
     && canUseSkillWithinBudget(templateId, budget)
@@ -332,7 +455,7 @@ function validateSkill(rawSkill, budget, label, options = {}) {
     throw new Error(`${label}格式无效`);
   }
   const templateId = compactText(rawSkill.templateId, 40);
-  const template = SKILL_CATALOG[templateId];
+  const template = catalogFor(templateId);
   if (!template) throw new Error(`${label}使用了未知技能`);
   if (normalizeBlockedSkillIds(options).has(templateId)) throw new Error(`${label}与本局已有技能效果重复`);
   if (!template.values.includes(rawSkill.value)) throw new Error(`${label}参数超出允许范围`);
@@ -356,7 +479,10 @@ function validateHeroProposal(rawHero, input, source, options = {}) {
   if (!rawHero || typeof rawHero !== 'object' || Array.isArray(rawHero)) throw new Error('英雄配置格式无效');
   const primarySkill = validateSkill(rawHero.primarySkill, PRIMARY_BUDGET, '主技能', options);
   const secondarySkill = validateSkill(rawHero.secondarySkill, SECONDARY_BUDGET, '副技能', options);
+  const specialSkill = validateSkill(rawHero.specialSkill, SPECIAL_BUDGET, '特技', options);
   if (primarySkill.templateId === secondarySkill.templateId) throw new Error('主副技能不能重复');
+  if (specialSkill.templateId === primarySkill.templateId || specialSkill.templateId === secondarySkill.templateId) throw new Error('特技不能与主副技能重复');
+  if (specialSkill.trigger !== 'SPECIAL_CARD') throw new Error('特技必须使用特技牌触发');
 
   const heroName = compactText(input.name, 16);
   const description = compactText(input.description, 120);
@@ -364,6 +490,10 @@ function validateHeroProposal(rawHero, input, source, options = {}) {
   const keywords = uniqueStrings(rawHero.avatarSearchKeywords, 3, 30);
   if (tags.length < 2) throw new Error('人物标签不足');
   if (!keywords.length) throw new Error('头像搜索词为空');
+  const maxHpBonus = [primarySkill, secondarySkill]
+    .filter((skill) => skill.templateId === 'MAX_HP_UP')
+    .reduce((total, skill) => total + skill.value, 0);
+  const maxHp = 3 + maxHpBonus;
 
   return {
     version: 1,
@@ -371,11 +501,11 @@ function validateHeroProposal(rawHero, input, source, options = {}) {
     description,
     title: compactText(rawHero.title, 16) || `${heroName}传说`,
     characterTags: tags,
-    maxHpBonus: [primarySkill, secondarySkill]
-      .filter((skill) => skill.templateId === 'MAX_HP_UP')
-      .reduce((total, skill) => total + skill.value, 0),
+    maxHp,
+    maxHpBonus,
     primarySkill,
     secondarySkill,
+    specialSkill,
     flavorText: compactText(rawHero.flavorText, 40) || '有些本领，只有上场之后才看得见。',
     avatarSearchKeywords: keywords,
     generationSource: source,
@@ -416,17 +546,32 @@ function buildFallbackProposal(input, options = {}) {
     || secondaryRanked[0]?.templateId
     || firstAllowedSkillId(['DODGE_AS_HEAL'], blockedSkillIds, SECONDARY_BUDGET, new Set([primaryId]));
   if (!secondaryId) throw new Error('本局剩余可用副技能不足');
+  const specialBlocked = new Set([primaryId, secondaryId]);
+  const specialRanked = rankSkillsByDescription(description, SPECIAL_BUDGET, blockedSkillIds, specialBlocked, SPECIAL_CATALOG);
+  const preferredSpecial = options.preferredSpecialSkillId
+    && SPECIAL_CATALOG[compactText(options.preferredSpecialSkillId, 40)]
+    && !specialBlocked.has(compactText(options.preferredSpecialSkillId, 40))
+    && canUseSkillWithinBudget(compactText(options.preferredSpecialSkillId, 40), SPECIAL_BUDGET)
+    ? compactText(options.preferredSpecialSkillId, 40)
+    : null;
+  const specialId = preferredSpecial
+    || specialRanked[0]?.templateId
+    || firstAllowedSkillId(Object.keys(SPECIAL_CATALOG), blockedSkillIds, SPECIAL_BUDGET, specialBlocked);
+  if (!specialId) throw new Error('本局剩余可用特技不足');
   const title = includesAny(text, ['唱', '跳', 'rap', '舞台']) ? '舞台掌控者' : includesAny(text, ['篮球', '运动']) ? '全场焦点' : '奇招达人';
   const usedLocalNames = new Set(usedNames);
   const primaryName = composeSkillName(primaryId, name, description, usedLocalNames, true);
   usedLocalNames.add(primaryName);
   const secondaryName = composeSkillName(secondaryId, name, description, usedLocalNames, false);
+  usedLocalNames.add(secondaryName);
+  const specialName = composeSkillName(specialId, name, description, usedLocalNames, true);
 
   return {
     title,
     characterTags: uniqueStrings(description.split(/[，,、。；;\s]+/), 4, 10).concat(['临场发挥']).slice(0, 5),
     primarySkill: { templateId: primaryId, name: primaryName, value: fallbackValueFor(primaryId, PRIMARY_BUDGET) },
     secondarySkill: { templateId: secondaryId, name: secondaryName, value: fallbackValueFor(secondaryId, SECONDARY_BUDGET) },
+    specialSkill: { templateId: specialId, name: specialName, value: fallbackValueFor(specialId, SPECIAL_BUDGET) },
     flavorText: '把熟悉的本领，变成牌桌上的意外惊喜。',
     avatarSearchKeywords: [`${name} 表情包`, `${name} 搞笑头像`]
   };
@@ -488,6 +633,33 @@ function planFallbackSkills(cards) {
     }
     plan.set(entry.index, current);
   }
+  // 特技分配：每张卡的主/副/特技互不重复，并尽量均匀使用特技库。
+  const remainingSpecial = new Set(entries.map((entry) => entry.index));
+  const specialUsage = new Map(Object.keys(SPECIAL_CATALOG).map((id) => [id, 0]));
+  while (remainingSpecial.size) {
+    let best = null;
+    for (const entry of entries) {
+      if (!remainingSpecial.has(entry.index)) continue;
+      const primaryId = plan.get(entry.index)?.primaryId;
+      const secondaryId = plan.get(entry.index)?.secondaryId;
+      for (const templateId of Object.keys(SPECIAL_CATALOG)) {
+        if (templateId === primaryId || templateId === secondaryId) continue;
+        if (!canUseSkillWithinBudget(templateId, SPECIAL_BUDGET)) continue;
+        const score = specialScoreFor(entry.description, templateId) - specialUsage.get(templateId) * 2;
+        if (!best || score > best.score) best = { index: entry.index, templateId, score };
+      }
+    }
+    if (!best) break;
+    plan.get(best.index).specialId = best.templateId;
+    specialUsage.set(best.templateId, specialUsage.get(best.templateId) + 1);
+    remainingSpecial.delete(best.index);
+  }
+  for (const entry of entries) {
+    const current = plan.get(entry.index);
+    if (!current.specialId) {
+      current.specialId = firstAllowedSkillId(Object.keys(SPECIAL_CATALOG), new Set(), SPECIAL_BUDGET, new Set([current.primaryId, current.secondaryId]));
+    }
+  }
   return plan;
 }
 
@@ -521,18 +693,24 @@ function extractChatCompletionText(payload) {
 
 function buildSkillOptions(options = {}) {
   const blockedSkillIds = normalizeBlockedSkillIds(options);
-  return Object.entries(SKILL_CATALOG)
+  const toOptions = (entries, catalog, isSpecial = false) => entries
     .filter(([id]) => !blockedSkillIds.has(id))
     .map(([id, skill]) => ({
-    id,
-    valueOptions: skill.values.map((value) => ({
-      value,
-      effect: skill.describe(value),
-      power: skill.powerByValue[value],
-      allowedAsPrimary: skill.powerByValue[value] <= PRIMARY_BUDGET,
-      allowedAsSecondary: skill.powerByValue[value] <= SECONDARY_BUDGET
-    }))
-  }));
+      id,
+      valueOptions: skill.values.map((value) => ({
+        value,
+        effect: skill.describe(value),
+        power: skill.powerByValue[value],
+        allowedAsPrimary: !isSpecial && skill.powerByValue[value] <= PRIMARY_BUDGET,
+        allowedAsSecondary: !isSpecial && skill.powerByValue[value] <= SECONDARY_BUDGET,
+        allowedAsSpecial: isSpecial && skill.powerByValue[value] <= SPECIAL_BUDGET
+      }))
+    }));
+  return {
+    primary: toOptions(Object.entries(SKILL_CATALOG)),
+    secondary: toOptions(Object.entries(SKILL_CATALOG)),
+    special: toOptions(Object.entries(SPECIAL_CATALOG), SPECIAL_CATALOG, true)
+  };
 }
 
 function buildDeepSeekMessages(input, validationError, options = {}) {
@@ -541,6 +719,7 @@ function buildDeepSeekMessages(input, validationError, options = {}) {
     characterTags: ['篮球', '舞台', '灵活'],
     primarySkill: { templateId: 'UNLIMITED_SLASH', name: '全场连击', value: 1 },
     secondarySkill: { templateId: 'EXTRA_DRAW', name: '节奏加速', value: 1 },
+    specialSkill: { templateId: 'SPECIAL_SHIELD_2', name: '舞台金钟罩', value: 1 },
     flavorText: '舞台和球场，都有自己的节拍。',
     avatarSearchKeywords: ['示例人物 篮球 表情包', '示例人物 搞笑头像']
   };
@@ -552,6 +731,7 @@ function buildDeepSeekMessages(input, validationError, options = {}) {
     '同一局里已经使用过的技能效果不能再次选择，必须避开这些 templateId。',
     '技能名称也要与同一局里已经使用的名称不同，结合人物特点创作，避免使用与示例或兜底模板相同的名称。',
     'primarySkill 和 secondarySkill 必须是 JSON 对象，且必须完整包含 templateId、name、value 三个字段。',
+    'specialSkill 必须是特技库中的技能，作为一张一次性特技牌使用，且与主技能、副技能互不重复。',
     '只能选择输入中提供的技能 ID 和数值；主技能预算不超过 5，副技能预算不超过 3，主副技能不得重复。',
     '不要输出 skill、skills、primary_skill、skillName 或 effect 等替代字段。',
     `严格按照这个对象形状返回：${JSON.stringify(example)}`,
@@ -596,6 +776,7 @@ async function requestModel(input, validationError = '', options = {}) {
       '同一局里已经使用过的技能效果不能再次选择，必须避开这些 templateId。',
       '技能名称也要与同一局里已经使用的名称不同，结合人物特点创作，避免使用与示例或兜底模板相同的名称。',
       '只能选择输入中提供的技能 ID 和参数，主技能预算不超过 5，副技能预算不超过 3，主副技能不得重复。',
+      'specialSkill 必须是特技库中的技能，与主技能、副技能互不重复；特技牌是一次性主动效果。',
       '头像搜索词应包含人物名称和表情包、趣味头像等用途词。',
       '只返回 JSON，不要输出 Markdown 代码块或解释文字。'
     ].join('\n');
@@ -715,6 +896,7 @@ async function generateHero(input, options = {}) {
 
 module.exports = {
   SKILL_CATALOG,
+  SPECIAL_CATALOG,
   AI_PROVIDERS,
   generateHero,
   validateHeroProposal,
