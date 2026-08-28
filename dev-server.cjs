@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { generateHero, planFallbackSkills, testModelConnection } = require('./hero-generator.cjs');
+const { createSession } = require('./server-game.cjs');
 
 const root = process.cwd();
 const port = Number(process.env.WEB_AI_GAME_PORT || 8000);
@@ -20,6 +21,7 @@ const PUBLIC_EXTENSIONS = new Set(['.html', '.css', '.js', '.png', '.mp3', '.svg
 let rooms = {};
 const roomClients = new Set();
 const generationJobs = new Map();
+const roomSessions = new Map();
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -275,6 +277,41 @@ function shuffleList(values) {
     [list[index], list[swapIndex]] = [list[swapIndex], list[index]];
   }
   return list;
+}
+
+function gameFingerprint(game) {
+  return JSON.stringify({
+    phase: game?.phase,
+    cp: game?.currentPlayerId,
+    round: game?.round,
+    log: (game?.actionLog || [])[0] || '',
+    hp: (game?.players || []).map((p) => `${p.id}:${p.hp}`).join('|'),
+    hand: (game?.players || []).map((p) => `${p.id}:${(p.hand || []).length}`).join('|'),
+    attack: game?.pendingAttack?.targetId || null,
+    spell: game?.pendingSpell?.currentTargetId || null,
+    rescue: game?.pendingRescue?.targetId || null,
+    judgments: (game?.activeJudgments || []).length
+  });
+}
+
+function applyRoomAction(response, roomCode, session, payload, room) {
+  const playerId = String(payload?.playerId || '');
+  const player = room.players?.find((item) => item.id === playerId);
+  if (!player) {
+    sendJson(response, 403, { ok: false, message: '玩家不属于该房间。' });
+    return;
+  }
+  if (!session.canAct(playerId)) {
+    sendJson(response, 409, { ok: false, message: '当前不能执行该操作（未轮到你，或未到响应/濒死阶段）。' });
+    return;
+  }
+  session.act({ ...payload, playerId });
+  const snapshot = session.snapshot();
+  room.game = snapshot;
+  session.lastFingerprint = gameFingerprint(snapshot);
+  room.updatedAt = Date.now();
+  scheduleBroadcast();
+  sendJson(response, 200, { ok: true, room, game: snapshot, playerId });
 }
 
 function touchRoom(room) {
@@ -585,12 +622,59 @@ async function handleApi(request, response, requestPath) {
         });
         room.phase = 'PLAYING';
         room.startedAt = room.startedAt || Date.now();
+        // 服务器权威对局：进入对局时，在服务端创建唯一的对局引擎并接管回合推进。
+        try {
+          const session = createSession(room);
+          roomSessions.set(roomCode, session);
+          room.game = session.snapshot();
+          session.lastFingerprint = gameFingerprint(room.game);
+        } catch (error) {
+          console.error(`Room ${roomCode} failed to create authoritative session:`, error);
+        }
         touchRoom(room);
         scheduleBroadcast();
       }
       sendJson(response, 200, { ok: true, room });
     } catch {
       sendJson(response, 400, { ok: false, message: '无法读取选将数据。' });
+    }
+    return true;
+  }
+
+  const actionMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/actions$/);
+  if (request.method === 'POST' && actionMatch) {
+    try {
+      const roomCode = actionMatch[1];
+      const payload = await readJson(request);
+      const room = rooms[roomCode];
+      if (!room) {
+        sendJson(response, 404, { ok: false, message: '房间不存在或已失效。' });
+        return true;
+      }
+      if (room.phase !== 'PLAYING') {
+        sendJson(response, 409, { ok: false, message: '当前不在对局阶段。' });
+        return true;
+      }
+      let session = roomSessions.get(roomCode);
+      if (!session) {
+        // 兼容旧房间：若未创建权威会话但房间已进入对局，则补建。
+        try {
+          const created = createSession(room);
+          roomSessions.set(roomCode, created);
+          session = created;
+          room.game = session.snapshot();
+          session.lastFingerprint = gameFingerprint(room.game);
+        } catch (error) {
+          console.error(`Room ${roomCode} session rebuild failed:`, error);
+        }
+      }
+      if (!session) {
+        sendJson(response, 409, { ok: false, message: '对局引擎尚未就绪。' });
+        return true;
+      }
+      applyRoomAction(response, roomCode, session, payload, room);
+    } catch {
+      sendJson(response, 400, { ok: false, message: '无法读取动作数据。' });
     }
     return true;
   }
@@ -642,6 +726,30 @@ function serveFile(response, requestPath) {
   });
 }
 
+// 服务器权威对局的驱动循环：每个房间每秒做多次超时结算 + 状态广播。
+function serverGameLoop() {
+  roomSessions.forEach((session, roomCode) => {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== 'PLAYING') {
+      roomSessions.delete(roomCode);
+      return;
+    }
+    try {
+      session.pumpTimers(Date.now());
+      session.tick();
+      const snapshot = session.snapshot();
+      const fingerprint = gameFingerprint(snapshot);
+      if (session.lastFingerprint === fingerprint) return;
+      session.lastFingerprint = fingerprint;
+      room.game = snapshot;
+      room.updatedAt = Date.now();
+      scheduleBroadcast();
+    } catch (error) {
+      console.error(`Room ${roomCode} authoritative game loop error:`, error);
+    }
+  });
+}
+
 http.createServer(async (request, response) => {
   const requestPath = decodeURIComponent(request.url.split('?')[0]);
 
@@ -659,4 +767,5 @@ http.createServer(async (request, response) => {
   const llmEnabled = Boolean(process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
   const llmModel = llmProvider === 'deepseek' ? (process.env.DEEPSEEK_MODEL || 'deepseek-chat') : (process.env.OPENAI_MODEL || 'gpt-4.1-mini');
   console.log(`AI hero generation: ${llmEnabled ? `server env fallback ${llmProvider} (${llmModel})` : 'no server key'} — 房主可在创建房间时选择 DeepSeek/通义千问并填写自己的 API Key，未配置时使用本地兜底生成。`);
+  setInterval(serverGameLoop, 250);
 });
