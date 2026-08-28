@@ -11,12 +11,6 @@ const SKILL_CATALOG = Object.freeze({
     powerByValue: Object.freeze({ 1: 5 }),
     describe: () => '出牌阶段使用杀没有次数限制'
   }),
-  MAX_HP_UP: Object.freeze({
-    trigger: 'PASSIVE_ALWAYS',
-    values: [1, 2],
-    powerByValue: Object.freeze({ 1: 3, 2: 5 }),
-    describe: (value) => `体力上限增加 ${value} 点`
-  }),
   DODGE_AS_HEAL: Object.freeze({
     trigger: 'PLAY_PHASE',
     values: [1],
@@ -52,6 +46,30 @@ const SKILL_CATALOG = Object.freeze({
     values: [1],
     powerByValue: Object.freeze({ 1: 2 }),
     describe: () => '每回合第一次使用杀后摸 1 张牌'
+  }),
+  DRAW_ON_KILL: Object.freeze({
+    trigger: 'AFTER_KILL',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '每次击败一名其他玩家后摸 2 张牌'
+  }),
+  HEAL_ON_KILL: Object.freeze({
+    trigger: 'AFTER_KILL',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '每次击败一名其他玩家后恢复 2 点生命'
+  }),
+  DODGE_DRAW: Object.freeze({
+    trigger: 'AFTER_DODGE',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '使用闪抵消杀后，摸 1 张牌'
+  }),
+  MERCIFUL_DRAW: Object.freeze({
+    trigger: 'AFTER_HEAL',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '每回合第一次使用奶后，摸 1 张牌'
   })
 });
 
@@ -105,6 +123,18 @@ const SPECIAL_CATALOG = Object.freeze({
     values: [1],
     powerByValue: Object.freeze({ 1: 3 }),
     describe: () => '本回合内自己受到的第一次伤害减少 2 点'
+  }),
+  SPECIAL_DRAW_2: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '立即摸 2 张牌'
+  }),
+  SPECIAL_DISCARD_TARGET: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '随机弃置一名其他玩家的最多 2 张手牌'
   })
 });
 
@@ -197,7 +227,7 @@ const SPECIAL_SCHEMA = {
 const HERO_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['title', 'characterTags', 'primarySkill', 'secondarySkill', 'specialSkill', 'flavorText', 'avatarSearchKeywords'],
+  required: ['title', 'characterTags', 'maxHp', 'primarySkill', 'secondarySkill', 'specialSkill', 'flavorText', 'avatarSearchKeywords'],
   properties: {
     title: { type: 'string', minLength: 1, maxLength: 16 },
     characterTags: {
@@ -206,6 +236,7 @@ const HERO_SCHEMA = {
       maxItems: 5,
       items: { type: 'string', minLength: 1, maxLength: 10 }
     },
+    maxHp: { type: 'integer', minimum: 5, maximum: 10 },
     primarySkill: SKILL_SCHEMA,
     secondarySkill: SKILL_SCHEMA,
     specialSkill: SPECIAL_SCHEMA,
@@ -222,13 +253,16 @@ const HERO_SCHEMA = {
 const FALLBACK_SKILL_NAMES = Object.freeze({
   EXTRA_DRAW: '灵感迸发',
   UNLIMITED_SLASH: '连击时刻',
-  MAX_HP_UP: '元气满满',
   DODGE_AS_HEAL: '化险为夷',
   FIRST_DAMAGE_REDUCTION: '稳如泰山',
   SLASH_DAMAGE_UP: '一击入魂',
   HEAL_PLUS: '满血回春',
   DAMAGE_DRAW: '越挫越勇',
-  SLASH_DRAW: '追击补牌'
+  SLASH_DRAW: '追击补牌',
+  DRAW_ON_KILL: '击杀补给',
+  HEAL_ON_KILL: '战意高昂',
+  DODGE_DRAW: '身法如电',
+  MERCIFUL_DRAW: '妙手仁心'
 });
 
 const FALLBACK_SPECIAL_NAMES = Object.freeze({
@@ -239,19 +273,24 @@ const FALLBACK_SPECIAL_NAMES = Object.freeze({
   SPECIAL_DRAW_3: '乾坤一掷',
   SPECIAL_HEAL_2: '回春术',
   SPECIAL_DISCARD_EQUIP: '卸甲令',
-  SPECIAL_SHIELD_2: '金钟罩'
+  SPECIAL_SHIELD_2: '金钟罩',
+  SPECIAL_DRAW_2: '妙手生花',
+  SPECIAL_DISCARD_TARGET: '釜底抽薪'
 });
 
 const FALLBACK_SKILL_VALUES = Object.freeze({
   EXTRA_DRAW: 1,
   UNLIMITED_SLASH: 1,
-  MAX_HP_UP: 1,
   DODGE_AS_HEAL: 1,
   FIRST_DAMAGE_REDUCTION: 1,
   SLASH_DAMAGE_UP: 1,
   HEAL_PLUS: 1,
   DAMAGE_DRAW: 1,
-  SLASH_DRAW: 1
+  SLASH_DRAW: 1,
+  DRAW_ON_KILL: 1,
+  HEAL_ON_KILL: 1,
+  DODGE_DRAW: 1,
+  MERCIFUL_DRAW: 1
 });
 
 const FALLBACK_SPECIAL_VALUES = Object.freeze({
@@ -262,7 +301,9 @@ const FALLBACK_SPECIAL_VALUES = Object.freeze({
   SPECIAL_DRAW_3: 1,
   SPECIAL_HEAL_2: 1,
   SPECIAL_DISCARD_EQUIP: 1,
-  SPECIAL_SHIELD_2: 1
+  SPECIAL_SHIELD_2: 1,
+  SPECIAL_DRAW_2: 1,
+  SPECIAL_DISCARD_TARGET: 1
 });
 
 // 关键词 → 技能效果 的贴合度打分，值越高越符合人物描述。
@@ -271,12 +312,15 @@ const KEYWORD_SKILL_SCORES = Object.freeze([
   { words: ['连续', '连击', '进攻', '篮球', '射击', '速度', '灵活', '敏捷', '快攻', '抢攻'], skill: 'UNLIMITED_SLASH', score: 3 },
   { words: ['唱跳', 'rap', '才艺', '舞台', '表现', '音乐', '跳舞', '唱歌', '节奏', '舞'], skill: 'EXTRA_DRAW', score: 3 },
   { words: ['坚强', '防御', '盾', '顽强', '不屈', '守护', '铁壁', '挨打', '抗压'], skill: 'FIRST_DAMAGE_REDUCTION', score: 3 },
-  { words: ['巨人', '强壮', '体力', '耐力', '健身', '血厚', '结实', '耐揍'], skill: 'MAX_HP_UP', score: 3 },
   { words: ['治疗', '医生', '奶', '恢复', '治愈', '温柔', '救护', '回血', '仁心'], skill: 'HEAL_PLUS', score: 3 },
   { words: ['受伤', '挨打', '抗压', '坚韧', '反打', '逆境', '越战', '逆袭'], skill: 'DAMAGE_DRAW', score: 3 },
   { words: ['闪避', '轻巧', '身法', '躲', '灵巧', '走位'], skill: 'DODGE_AS_HEAL', score: 2 },
   { words: ['谋略', '聪明', '运筹', '头脑', '计划', '智慧'], skill: 'EXTRA_DRAW', score: 2 },
-  { words: ['追击', '收割', '补刀', '连招'], skill: 'SLASH_DRAW', score: 2 }
+  { words: ['追击', '收割', '补刀', '连招'], skill: 'SLASH_DRAW', score: 2 },
+  { words: ['击杀', '斩将', '终结', '收割', '击败'], skill: 'DRAW_ON_KILL', score: 2 },
+  { words: ['战意', '凯旋', '余勇', '越战'], skill: 'HEAL_ON_KILL', score: 2 },
+  { words: ['身法', '闪避', '灵巧', '伺机', '走位'], skill: 'DODGE_DRAW', score: 2 },
+  { words: ['仁心', '医者', '悬壶', '妙手', '救人'], skill: 'MERCIFUL_DRAW', score: 2 }
 ]);
 
 // 提取描述中用于技能命名的人物关键词，按优先级取第一个命中的词。
@@ -284,20 +328,24 @@ const NAME_KEYWORD_ORDER = Object.freeze([
   '篮球', '舞台', '唱跳', '音乐', 'rap', '舞', '医生', '治疗', '治愈', '救护', '仁心',
   '仓鼠', '收藏', '收集', '宝藏', '背包', '防御', '盾', '守护', '铁壁', '爆发', '重击', '力量',
   '雷霆', '闪电', '连击', '连续', '速度', '敏捷', '闪避', '身法', '谋略', '智慧', '受伤', '坚韧',
-  '健身', '强壮', '体力', '耐力', '巨人', '温柔', '可爱', '搞笑', '火锅', '游戏', '编程', '代码', '摄影'
+  '健身', '强壮', '体力', '耐力', '巨人', '温柔', '可爱', '搞笑', '火锅', '游戏', '编程', '代码', '摄影',
+  '收割', '凯旋', '仁医', '妙手', '悬壶', '医者', '击杀', '斩将'
 ]);
 
 // 每个技能效果的趣味命名池，{kw} 会被人物关键词替换；主技能优先使用带 {kw} 的名称。
 const SKILL_NAME_POOLS = Object.freeze({
   EXTRA_DRAW: ['{kw}灵感', '{kw}节奏', '{kw}手气', '灵感迸发', '源源不绝', '手气如虹', '{kw}之谋'],
   UNLIMITED_SLASH: ['{kw}连击', '{kw}连斩', '{kw}风暴', '连击时刻', '无限进攻', '越攻越猛', '{kw}狂攻'],
-  MAX_HP_UP: ['{kw}元气', '{kw}铁骨', '{kw}体质', '元气满满', '钢筋铁骨', '血厚如牛', '{kw}之躯'],
   DODGE_AS_HEAL: ['{kw}闪转', '{kw}灵动', '{kw}之舞', '化险为夷', '身法如风', '绝处逢生', '{kw}身法'],
   FIRST_DAMAGE_REDUCTION: ['{kw}守护', '{kw}铁壁', '{kw}屏障', '稳如泰山', '不动如山', '铜墙铁壁', '{kw}之盾'],
   SLASH_DAMAGE_UP: ['{kw}一击', '{kw}重击', '{kw}暴击', '一击入魂', '雷霆一击', '力拔千钧', '{kw}之威'],
   HEAL_PLUS: ['{kw}回春', '{kw}妙手', '{kw}治愈', '满血回春', '妙手仁心', '仁心仁术', '{kw}圣手'],
   DAMAGE_DRAW: ['{kw}不屈', '{kw}反打', '{kw}逆袭', '越挫越勇', '绝地反击', '逆境爆发', '{kw}反击'],
-  SLASH_DRAW: ['{kw}追击', '{kw}连招', '{kw}补刀', '追击补牌', '乘胜追击', '愈战愈勇', '{kw}收割']
+  SLASH_DRAW: ['{kw}追击', '{kw}连招', '{kw}补刀', '追击补牌', '乘胜追击', '愈战愈勇', '{kw}收割'],
+  DRAW_ON_KILL: ['{kw}收割', '{kw}补给', '{kw}缴获', '击杀补给', '战利品', '一鼓作气', '{kw}收获'],
+  HEAL_ON_KILL: ['{kw}威震', '{kw}凯旋', '{kw}余勇', '战意高昂', '凯旋而归', '王者归来', '{kw}斗志'],
+  DODGE_DRAW: ['{kw}闪身', '{kw}灵动', '{kw}伺机', '身法如电', '见招拆招', '后发先至', '{kw}身法'],
+  MERCIFUL_DRAW: ['{kw}仁医', '{kw}妙手', '{kw}悬壶', '妙手仁心', '医者仁心', '悬壶济世', '{kw}仁心']
 });
 
 const SPECIAL_NAME_POOLS = Object.freeze({
@@ -308,7 +356,9 @@ const SPECIAL_NAME_POOLS = Object.freeze({
   SPECIAL_DRAW_3: ['{kw}乾坤', '{kw}妙计', '{kw}灵感', '乾坤一掷', '妙手生花', '运筹帷幄', '{kw}之策'],
   SPECIAL_HEAL_2: ['{kw}回春', '{kw}妙手', '{kw}圣光', '回春术', '妙手回春', '枯木逢春', '{kw}仁心'],
   SPECIAL_DISCARD_EQUIP: ['{kw}卸甲', '{kw}破防', '{kw}瓦解', '卸甲令', '釜底抽薪', '兵不厌诈', '{kw}之击'],
-  SPECIAL_SHIELD_2: ['{kw}金钟', '{kw}铁壁', '{kw}守护', '金钟罩', '铜墙铁壁', '不动如山', '{kw}之盾']
+  SPECIAL_SHIELD_2: ['{kw}金钟', '{kw}铁壁', '{kw}守护', '金钟罩', '铜墙铁壁', '不动如山', '{kw}之盾'],
+  SPECIAL_DRAW_2: ['{kw}妙计', '{kw}灵感', '{kw}神来', '妙手生花', '神机妙算', '天马行空', '{kw}之智'],
+  SPECIAL_DISCARD_TARGET: ['{kw}巧取', '{kw}长驱', '{kw}席卷', '釜底抽薪', '声东击西', '趁火打劫', '{kw}之击']
 });
 
 function normalizeUsedNames(options = {}) {
@@ -340,7 +390,9 @@ function specialScoreFor(description, templateId) {
     { words: ['谋略', '聪明', '运筹', '计划', '智慧', '研究', '知识'], skill: 'SPECIAL_DRAW_3', score: 3 },
     { words: ['治疗', '医生', '奶', '恢复', '治愈', '温柔', '救护', '回血', '仁心'], skill: 'SPECIAL_HEAL_2', score: 3 },
     { words: ['装备', '武器', '铠甲', '卸', '缴械', '夺'], skill: 'SPECIAL_DISCARD_EQUIP', score: 3 },
-    { words: ['防御', '盾', '守护', '铁壁', '挨打', '抗压', '不屈'], skill: 'SPECIAL_SHIELD_2', score: 3 }
+    { words: ['防御', '盾', '守护', '铁壁', '挨打', '抗压', '不屈'], skill: 'SPECIAL_SHIELD_2', score: 3 },
+    { words: ['谋略', '聪明', '运筹', '计划', '智慧', '研究', '知识', '手牌', '抽牌'], skill: 'SPECIAL_DRAW_2', score: 3 },
+    { words: ['弃牌', '手牌', '瓦解', '剥夺', '没收', '缴械', '洗牌'], skill: 'SPECIAL_DISCARD_TARGET', score: 2 }
   ];
   for (const rule of rules) {
     if (rule.skill !== templateId) continue;
@@ -440,10 +492,10 @@ function fallbackValueFor(templateId, budget) {
   return template?.values?.find((value) => template.powerByValue[value] <= budget);
 }
 
-function firstAllowedSkillId(candidates, blockedSkillIds, budget, avoidSkillIds = new Set()) {
-  const ordered = [...candidates, ...Object.keys(SKILL_CATALOG), ...Object.keys(SPECIAL_CATALOG)];
+function firstAllowedSkillId(candidates, blockedSkillIds, budget, avoidSkillIds = new Set(), catalog = SKILL_CATALOG) {
+  const ordered = [...candidates, ...Object.keys(catalog)];
   return ordered.find((templateId) => (
-    catalogFor(templateId)
+    catalog[templateId]
     && !blockedSkillIds.has(templateId)
     && !avoidSkillIds.has(templateId)
     && canUseSkillWithinBudget(templateId, budget)
@@ -457,14 +509,15 @@ function validateSkill(rawSkill, budget, label, options = {}) {
   const templateId = compactText(rawSkill.templateId, 40);
   const template = catalogFor(templateId);
   if (!template) throw new Error(`${label}使用了未知技能`);
-  if (normalizeBlockedSkillIds(options).has(templateId)) throw new Error(`${label}与本局已有技能效果重复`);
   if (!template.values.includes(rawSkill.value)) throw new Error(`${label}参数超出允许范围`);
   const power = template.powerByValue[rawSkill.value];
   if (power > budget) throw new Error(`${label}超过强度预算`);
-  const name = compactText(rawSkill.name, 8);
-  if (!name) throw new Error(`${label}缺少名称`);
+  const baseName = compactText(rawSkill.name, 8);
+  if (!baseName) throw new Error(`${label}缺少名称`);
   const usedNames = normalizeUsedNames(options);
-  if (usedNames.has(name)) throw new Error(`${label}技能名称与本局已有技能重复`);
+  // 技能名撞名时由服务端自动生成唯一名，保留 AI 选定的效果，而不是整卡回退到兜底模板。
+  const name = usedNames.has(baseName) ? uniquifySkillName(baseName, usedNames) : baseName;
+  if (!name) throw new Error(`${label}技能名称与本局已有技能重复`);
   return {
     templateId,
     name,
@@ -475,11 +528,66 @@ function validateSkill(rawSkill, budget, label, options = {}) {
   };
 }
 
+function uniquifySkillName(baseName, usedNames) {
+  let suffix = 2;
+  while (suffix < 20) {
+    const marker = suffix === 2 ? '·二' : suffix === 3 ? '·三' : suffix === 4 ? '·四' : `·${suffix}`;
+    const candidate = `${baseName.slice(0, Math.max(1, 8 - marker.length))}${marker}`;
+    if (!usedNames.has(candidate)) return candidate;
+    suffix += 1;
+  }
+  return null;
+}
+
+// 血量是卡牌固有属性（5-10 滴），根据人物特色由服务端复核，而不是由技能决定。
+function hashString(text) {
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(31, hash) + text.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function computeMaxHp(name, description) {
+  const text = `${String(name || '')}${String(description || '')}`.toLowerCase();
+  let score = 7;
+  // 偏重甲/防御/力量的人物通常血量更高；敏捷/法师/脆皮的人物通常血量偏低。
+  const tankyWords = ['坦克', '肉盾', '盾', '防御', '强壮', '巨人', '血厚', '耐揍', '皮糙', '守护', '铁壁', '重装', '力量', '肌肉', '大力', '结实', '金刚', '坚', '厚重', '耐打', '耐抗'];
+  const agileWords = ['敏捷', '灵巧', '身法', '刺客', '法师', '脆', '轻盈', '走位', '迅捷', '疾', '轻', '谋士', '智', '快攻', '速度', '灵', '脆皮', '轻盈', '轻功', '快'];
+  for (const word of tankyWords) if (text.includes(word)) score += 1;
+  for (const word of agileWords) if (text.includes(word)) score -= 1;
+  // 让同一房间内不同英雄的血量有一定差异，但始终落在 5-10 之间。
+  score += (hashString(text + 'hp') % 3) - 1;
+  return Math.max(5, Math.min(10, score));
+}
+
+function resolveMaxHp(rawMaxHp, name, description) {
+  const heuristic = computeMaxHp(name, description);
+  const value = Number(rawMaxHp);
+  if (Number.isInteger(value) && value >= 5 && value <= 10) {
+    // 服务端复核：允许 AI 在 5-10 之间给出，但不得与人物特色基础值偏离超过 2 点。
+    if (Math.abs(value - heuristic) <= 2) return value;
+    return Math.max(5, Math.min(10, heuristic + (value > heuristic ? 2 : -2)));
+  }
+  return heuristic;
+}
+
 function validateHeroProposal(rawHero, input, source, options = {}) {
   if (!rawHero || typeof rawHero !== 'object' || Array.isArray(rawHero)) throw new Error('英雄配置格式无效');
-  const primarySkill = validateSkill(rawHero.primarySkill, PRIMARY_BUDGET, '主技能', options);
-  const secondarySkill = validateSkill(rawHero.secondarySkill, SECONDARY_BUDGET, '副技能', options);
-  const specialSkill = validateSkill(rawHero.specialSkill, SPECIAL_BUDGET, '特技', options);
+  // 单张卡内主/副/特技的名称也必须互不相同，因此每张技能校验后把已用名传给下一张。
+  const heroContext = {
+    ...options,
+    usedNames: [
+      ...(Array.isArray(options.usedNames) ? options.usedNames : []),
+      ...(Array.isArray(options.existingNames) ? options.existingNames : [])
+    ]
+  };
+  const primarySkill = validateSkill(rawHero.primarySkill, PRIMARY_BUDGET, '主技能', heroContext);
+  const afterPrimary = [...heroContext.usedNames, primarySkill.name];
+  const secondarySkill = validateSkill(rawHero.secondarySkill, SECONDARY_BUDGET, '副技能', { ...heroContext, usedNames: afterPrimary });
+  const afterSecondary = [...afterPrimary, secondarySkill.name];
+  const specialSkill = validateSkill(rawHero.specialSkill, SPECIAL_BUDGET, '特技', { ...heroContext, usedNames: afterSecondary });
   if (primarySkill.templateId === secondarySkill.templateId) throw new Error('主副技能不能重复');
   if (specialSkill.templateId === primarySkill.templateId || specialSkill.templateId === secondarySkill.templateId) throw new Error('特技不能与主副技能重复');
   if (specialSkill.trigger !== 'SPECIAL_CARD') throw new Error('特技必须使用特技牌触发');
@@ -490,10 +598,7 @@ function validateHeroProposal(rawHero, input, source, options = {}) {
   const keywords = uniqueStrings(rawHero.avatarSearchKeywords, 3, 30);
   if (tags.length < 2) throw new Error('人物标签不足');
   if (!keywords.length) throw new Error('头像搜索词为空');
-  const maxHpBonus = [primarySkill, secondarySkill]
-    .filter((skill) => skill.templateId === 'MAX_HP_UP')
-    .reduce((total, skill) => total + skill.value, 0);
-  const maxHp = 3 + maxHpBonus;
+  const maxHp = resolveMaxHp(rawHero.maxHp, input.name, input.description);
 
   return {
     version: 1,
@@ -502,7 +607,6 @@ function validateHeroProposal(rawHero, input, source, options = {}) {
     title: compactText(rawHero.title, 16) || `${heroName}传说`,
     characterTags: tags,
     maxHp,
-    maxHpBonus,
     primarySkill,
     secondarySkill,
     specialSkill,
@@ -532,8 +636,9 @@ function buildFallbackProposal(input, options = {}) {
   const primaryRanked = rankSkillsByDescription(description, PRIMARY_BUDGET, blockedSkillIds);
   const primaryId = preferredPrimary
     || primaryRanked[0]?.templateId
-    || firstAllowedSkillId(['EXTRA_DRAW'], blockedSkillIds, PRIMARY_BUDGET);
-  if (!primaryId) throw new Error('本局剩余可用主技能不足');
+    || firstAllowedSkillId(['EXTRA_DRAW'], blockedSkillIds, PRIMARY_BUDGET)
+    || Object.keys(SKILL_CATALOG).find((id) => canUseSkillWithinBudget(id, PRIMARY_BUDGET) && !blockedSkillIds.has(id))
+    || Object.keys(SKILL_CATALOG).find((id) => canUseSkillWithinBudget(id, PRIMARY_BUDGET));
   const preferredSecondary = options.preferredSecondarySkillId
     && SKILL_CATALOG[compactText(options.preferredSecondarySkillId, 40)]
     && !blockedSkillIds.has(compactText(options.preferredSecondarySkillId, 40))
@@ -544,8 +649,9 @@ function buildFallbackProposal(input, options = {}) {
   const secondaryRanked = rankSkillsByDescription(description, SECONDARY_BUDGET, blockedSkillIds, new Set([primaryId]));
   const secondaryId = preferredSecondary
     || secondaryRanked[0]?.templateId
-    || firstAllowedSkillId(['DODGE_AS_HEAL'], blockedSkillIds, SECONDARY_BUDGET, new Set([primaryId]));
-  if (!secondaryId) throw new Error('本局剩余可用副技能不足');
+    || firstAllowedSkillId(['DODGE_AS_HEAL'], blockedSkillIds, SECONDARY_BUDGET, new Set([primaryId]))
+    || Object.keys(SKILL_CATALOG).find((id) => canUseSkillWithinBudget(id, SECONDARY_BUDGET) && !blockedSkillIds.has(id) && id !== primaryId)
+    || Object.keys(SKILL_CATALOG).find((id) => canUseSkillWithinBudget(id, SECONDARY_BUDGET) && id !== primaryId);
   const specialBlocked = new Set([primaryId, secondaryId]);
   const specialRanked = rankSkillsByDescription(description, SPECIAL_BUDGET, blockedSkillIds, specialBlocked, SPECIAL_CATALOG);
   const preferredSpecial = options.preferredSpecialSkillId
@@ -556,8 +662,9 @@ function buildFallbackProposal(input, options = {}) {
     : null;
   const specialId = preferredSpecial
     || specialRanked[0]?.templateId
-    || firstAllowedSkillId(Object.keys(SPECIAL_CATALOG), blockedSkillIds, SPECIAL_BUDGET, specialBlocked);
-  if (!specialId) throw new Error('本局剩余可用特技不足');
+    || firstAllowedSkillId(Object.keys(SPECIAL_CATALOG), blockedSkillIds, SPECIAL_BUDGET, specialBlocked, SPECIAL_CATALOG)
+    || Object.keys(SPECIAL_CATALOG).find((id) => canUseSkillWithinBudget(id, SPECIAL_BUDGET) && !blockedSkillIds.has(id) && !specialBlocked.has(id))
+    || Object.keys(SPECIAL_CATALOG).find((id) => canUseSkillWithinBudget(id, SPECIAL_BUDGET));
   const title = includesAny(text, ['唱', '跳', 'rap', '舞台']) ? '舞台掌控者' : includesAny(text, ['篮球', '运动']) ? '全场焦点' : '奇招达人';
   const usedLocalNames = new Set(usedNames);
   const primaryName = composeSkillName(primaryId, name, description, usedLocalNames, true);
@@ -569,6 +676,7 @@ function buildFallbackProposal(input, options = {}) {
   return {
     title,
     characterTags: uniqueStrings(description.split(/[，,、。；;\s]+/), 4, 10).concat(['临场发挥']).slice(0, 5),
+    maxHp: computeMaxHp(name, description),
     primarySkill: { templateId: primaryId, name: primaryName, value: fallbackValueFor(primaryId, PRIMARY_BUDGET) },
     secondarySkill: { templateId: secondaryId, name: secondaryName, value: fallbackValueFor(secondaryId, SECONDARY_BUDGET) },
     specialSkill: { templateId: specialId, name: specialName, value: fallbackValueFor(specialId, SPECIAL_BUDGET) },
@@ -578,86 +686,79 @@ function buildFallbackProposal(input, options = {}) {
 }
 
 // 为房间内所有英雄做一次全局技能分配，优先保证“贴合描述 + 全房间不重样”。
-// 先给每个玩家分配最贴合的主技能，再分配副技能；每个技能效果在房间内只出现一次。
+// 每个玩家的 5 张卡内，主技能、副技能、特技都互不相同（避免同屏重复），
+// 并且结合人物描述贴合度打分；跨玩家时尽量让特技均匀分布。
 function planFallbackSkills(cards) {
   const entries = cards.map((card, index) => ({
     index,
+    playerId: card?.playerId || `__card_${index}`,
     name: compactText(card?.name, 16),
     description: compactText(card?.description, 120)
   }));
   const plan = new Map();
-  const assigned = new Set();
-  const remainingPrimary = new Set(entries.map((entry) => entry.index));
-  while (remainingPrimary.size) {
-    let best = null;
-    for (const entry of entries) {
-      if (!remainingPrimary.has(entry.index)) continue;
-      for (const templateId of Object.keys(SKILL_CATALOG)) {
-        if (assigned.has(templateId) || !canUseSkillWithinBudget(templateId, PRIMARY_BUDGET)) continue;
-        const score = skillScoreFor(entry.description, templateId);
-        if (!best || score > best.score) best = { index: entry.index, templateId, score };
-      }
-    }
-    if (!best) break;
-    plan.set(best.index, { primaryId: best.templateId, secondaryId: null });
-    assigned.add(best.templateId);
-    remainingPrimary.delete(best.index);
-  }
-  const remainingSecondary = new Set(entries.map((entry) => entry.index));
-  while (remainingSecondary.size) {
-    let best = null;
-    for (const entry of entries) {
-      if (!remainingSecondary.has(entry.index)) continue;
-      const primaryId = plan.get(entry.index)?.primaryId;
-      if (!primaryId) continue;
-      for (const templateId of Object.keys(SKILL_CATALOG)) {
-        if (assigned.has(templateId) || templateId === primaryId || !canUseSkillWithinBudget(templateId, SECONDARY_BUDGET)) continue;
-        const score = skillScoreFor(entry.description, templateId);
-        if (!best || score > best.score) best = { index: entry.index, templateId, score };
-      }
-    }
-    if (!best) break;
-    plan.get(best.index).secondaryId = best.templateId;
-    assigned.add(best.templateId);
-    remainingSecondary.delete(best.index);
-  }
+  const groups = [];
+  const groupByPlayer = new Map();
   for (const entry of entries) {
-    const current = plan.get(entry.index) || { primaryId: null, secondaryId: null };
-    if (!current.primaryId) {
-      current.primaryId = firstAllowedSkillId(['EXTRA_DRAW'], assigned, PRIMARY_BUDGET);
-      if (current.primaryId) assigned.add(current.primaryId);
+    if (!groupByPlayer.has(entry.playerId)) {
+      const group = [];
+      groupByPlayer.set(entry.playerId, group);
+      groups.push(group);
     }
-    if (!current.secondaryId) {
-      current.secondaryId = firstAllowedSkillId(['DODGE_AS_HEAL'], assigned, SECONDARY_BUDGET, new Set([current.primaryId]));
-      if (current.secondaryId) assigned.add(current.secondaryId);
-    }
-    plan.set(entry.index, current);
+    groupByPlayer.get(entry.playerId).push(entry);
   }
-  // 特技分配：每张卡的主/副/特技互不重复，并尽量均匀使用特技库。
-  const remainingSpecial = new Set(entries.map((entry) => entry.index));
   const specialUsage = new Map(Object.keys(SPECIAL_CATALOG).map((id) => [id, 0]));
-  while (remainingSpecial.size) {
-    let best = null;
-    for (const entry of entries) {
-      if (!remainingSpecial.has(entry.index)) continue;
-      const primaryId = plan.get(entry.index)?.primaryId;
-      const secondaryId = plan.get(entry.index)?.secondaryId;
-      for (const templateId of Object.keys(SPECIAL_CATALOG)) {
-        if (templateId === primaryId || templateId === secondaryId) continue;
-        if (!canUseSkillWithinBudget(templateId, SPECIAL_BUDGET)) continue;
-        const score = specialScoreFor(entry.description, templateId) - specialUsage.get(templateId) * 2;
-        if (!best || score > best.score) best = { index: entry.index, templateId, score };
+  const mainSkillIds = Object.keys(SKILL_CATALOG);
+  const specialSkillIds = Object.keys(SPECIAL_CATALOG);
+
+  for (const group of groups) {
+    const groupPrimary = new Set();
+    const groupSecondary = new Set();
+    const groupSpecial = new Set();
+    for (const entry of group) {
+      // 主技能：卡内已用 + 描述贴合度最高，且不与其他卡重复
+      let primaryId = null;
+      let primaryScore = -Infinity;
+      for (const id of mainSkillIds) {
+        if (groupPrimary.has(id) || !canUseSkillWithinBudget(id, PRIMARY_BUDGET)) continue;
+        const score = skillScoreFor(entry.description, id);
+        if (score > primaryScore) { primaryScore = score; primaryId = id; }
       }
-    }
-    if (!best) break;
-    plan.get(best.index).specialId = best.templateId;
-    specialUsage.set(best.templateId, specialUsage.get(best.templateId) + 1);
-    remainingSpecial.delete(best.index);
-  }
-  for (const entry of entries) {
-    const current = plan.get(entry.index);
-    if (!current.specialId) {
-      current.specialId = firstAllowedSkillId(Object.keys(SPECIAL_CATALOG), new Set(), SPECIAL_BUDGET, new Set([current.primaryId, current.secondaryId]));
+      if (!primaryId) {
+        primaryId = mainSkillIds.find((id) => canUseSkillWithinBudget(id, PRIMARY_BUDGET) && !groupPrimary.has(id))
+          || mainSkillIds.find((id) => canUseSkillWithinBudget(id, PRIMARY_BUDGET));
+      }
+      groupPrimary.add(primaryId);
+
+      // 副技能：与主技能不同、卡内已用不同，优先贴合描述
+      let secondaryId = null;
+      let secondaryScore = -Infinity;
+      for (const id of mainSkillIds) {
+        if (id === primaryId || groupSecondary.has(id) || !canUseSkillWithinBudget(id, SECONDARY_BUDGET)) continue;
+        const score = skillScoreFor(entry.description, id);
+        if (score > secondaryScore) { secondaryScore = score; secondaryId = id; }
+      }
+      if (!secondaryId) {
+        secondaryId = mainSkillIds.find((id) => id !== primaryId && canUseSkillWithinBudget(id, SECONDARY_BUDGET) && !groupSecondary.has(id))
+          || mainSkillIds.find((id) => id !== primaryId && canUseSkillWithinBudget(id, SECONDARY_BUDGET));
+      }
+      groupSecondary.add(secondaryId);
+
+      // 特技：与主/副不同、卡内已用不同，尽量均匀使用特技库
+      let specialId = null;
+      let specialScore = -Infinity;
+      for (const id of specialSkillIds) {
+        if (id === primaryId || id === secondaryId || groupSpecial.has(id)) continue;
+        const score = specialScoreFor(entry.description, id) - specialUsage.get(id) * 2;
+        if (score > specialScore) { specialScore = score; specialId = id; }
+      }
+      if (!specialId) {
+        specialId = specialSkillIds.find((id) => id !== primaryId && id !== secondaryId && !groupSpecial.has(id))
+          || specialSkillIds.find((id) => id !== primaryId && id !== secondaryId);
+      }
+      specialUsage.set(specialId, specialUsage.get(specialId) + 1);
+      groupSpecial.add(specialId);
+
+      plan.set(entry.index, { primaryId, secondaryId, specialId });
     }
   }
   return plan;
@@ -717,6 +818,7 @@ function buildDeepSeekMessages(input, validationError, options = {}) {
   const example = {
     title: '全场焦点',
     characterTags: ['篮球', '舞台', '灵活'],
+    maxHp: 7,
     primarySkill: { templateId: 'UNLIMITED_SLASH', name: '全场连击', value: 1 },
     secondarySkill: { templateId: 'EXTRA_DRAW', name: '节奏加速', value: 1 },
     specialSkill: { templateId: 'SPECIAL_SHIELD_2', name: '舞台金钟罩', value: 1 },
@@ -730,6 +832,7 @@ function buildDeepSeekMessages(input, validationError, options = {}) {
     '不要默认选择 FIRST_DAMAGE_REDUCTION + DODGE_AS_HEAL；除非人物描述明显偏防御、守护或治疗。进攻、舞台、收集、受伤反打、治疗、速度等特质应优先选择对应的不同模板。',
     '同一局里已经使用过的技能效果不能再次选择，必须避开这些 templateId。',
     '技能名称也要与同一局里已经使用的名称不同，结合人物特点创作，避免使用与示例或兜底模板相同的名称。',
+    'maxHp 是根据人物特色选择的整数，范围 5 到 10 之间：坦克、重装、防御、力量型人物偏高（8-10），敏捷、法师、刺客、脆皮型人物偏低（5-7），其余取 7 或 8。',
     'primarySkill 和 secondarySkill 必须是 JSON 对象，且必须完整包含 templateId、name、value 三个字段。',
     'specialSkill 必须是特技库中的技能，作为一张一次性特技牌使用，且与主技能、副技能互不重复。',
     '只能选择输入中提供的技能 ID 和数值；主技能预算不超过 5，副技能预算不超过 3，主副技能不得重复。',
@@ -775,6 +878,7 @@ async function requestModel(input, validationError = '', options = {}) {
       '不要默认选择 FIRST_DAMAGE_REDUCTION + DODGE_AS_HEAL；除非人物描述明显偏防御、守护或治疗。进攻、舞台、收集、受伤反打、治疗、速度等特质应优先选择对应的不同模板。',
       '同一局里已经使用过的技能效果不能再次选择，必须避开这些 templateId。',
       '技能名称也要与同一局里已经使用的名称不同，结合人物特点创作，避免使用与示例或兜底模板相同的名称。',
+      'maxHp 是根据人物特色选择的整数，范围 5 到 10 之间；坦克、重装、防御、力量型人物偏高（8-10），敏捷、法师、刺客、脆皮型人物偏低（5-7），其余取 7 或 8。',
       '只能选择输入中提供的技能 ID 和参数，主技能预算不超过 5，副技能预算不超过 3，主副技能不得重复。',
       'specialSkill 必须是特技库中的技能，与主技能、副技能互不重复；特技牌是一次性主动效果。',
       '头像搜索词应包含人物名称和表情包、趣味头像等用途词。',

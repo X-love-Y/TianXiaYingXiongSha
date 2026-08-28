@@ -271,6 +271,12 @@
       backdrop-filter: blur(10px);
     }
 
+    /* 关键修复：.generating-panel 设置了 display:grid，会覆盖浏览器默认的 [hidden]{display:none}，
+       导致“AI 英雄卡牌工坊”提示在描述/确认阶段也一直显示。这里显式恢复 hidden 的隐藏行为。 */
+    .generating-panel[hidden] {
+      display: none;
+    }
+
     .generating-title {
       color: var(--gold-light);
       font-family: SimSun, STSong, serif;
@@ -584,7 +590,7 @@
             <span class="card-title">${escapeHtml(hero.heroName)}</span>
             <span class="card-number">${String(index + 1).padStart(2, '0')}</span>
           </div>
-          <div class="review-row"><span>血量</span><strong>${hero.maxHp || (2 + (hero.maxHpBonus || 0))}</strong></div>
+          <div class="review-row"><span>血量</span><strong>${hero.maxHp || 5}</strong></div>
           <div class="review-row"><span>主技能</span><strong>${escapeHtml(hero.primarySkill?.name || '')}</strong><small>${escapeHtml(hero.primarySkill?.description || '')}</small></div>
           <div class="review-row"><span>副技能</span><strong>${escapeHtml(hero.secondarySkill?.name || '')}</strong><small>${escapeHtml(hero.secondarySkill?.description || '')}</small></div>
           <div class="review-row"><span>特技</span><strong>${escapeHtml(hero.specialSkill?.name || '')}</strong><small>${escapeHtml(hero.specialSkill?.description || '')}</small></div>
@@ -726,6 +732,15 @@
               }
               return;
             }
+            // 英雄已生成但本地尚未同步到本玩家的英雄（例如刚刷新/切换标签页），
+            // 避免误回退到“提交定制”表单：保持工坊隐藏，提示正在同步确认阶段。
+            hideGenerating();
+            cardsEl.innerHTML = '';
+            hintEl.textContent = '英雄卡已生成完成，正在同步确认阶段，请稍候…';
+            submitButton.disabled = true;
+            submitButton.textContent = '正在同步';
+            submitButton.onclick = null;
+            return;
           }
           submitButton.onclick = null;
           hideGenerating();

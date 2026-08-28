@@ -506,7 +506,7 @@
     const SUITS = ['♠', '♥', '♣', '♦'];
     const POINT_LABELS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
     const SPELL_TYPES = ['ban', 'maosheng', 'death-god', 'love-god', 'steal', 'mutual-doom', 'special'];
-    const SPECIAL_NEEDS_TARGET = ['SPECIAL_DAMAGE_2', 'SPECIAL_STEAL_CARD', 'SPECIAL_SILENCE', 'SPECIAL_DISCARD_EQUIP'];
+    const SPECIAL_NEEDS_TARGET = ['SPECIAL_DAMAGE_2', 'SPECIAL_STEAL_CARD', 'SPECIAL_SILENCE', 'SPECIAL_DISCARD_EQUIP', 'SPECIAL_DISCARD_TARGET'];
     const SPECIAL_AOE = 'SPECIAL_AOE_1';
     let roomSession = null;
     let gameState = null;
@@ -751,7 +751,7 @@
     }
     function makePlayer(roomPlayer, isDemo = false) {
       const hero = getGeneratedHero(roomData, roomPlayer.id);
-      const maxHp = hero?.maxHp || (MAX_HP + (hero?.maxHpBonus || 0));
+      const maxHp = hero?.maxHp || MAX_HP;
       return {
         id: roomPlayer.id,
         nickname: roomPlayer.nickname || (isDemo ? '演示对手' : '玩家'),
@@ -974,7 +974,8 @@
       const ariaLabel = cardEffect ? `${card.name}，${label}，${cardEffect}` : `${card.name}，${label}`;
       return `<button type="button" class="card ${SPELL_TYPES.includes(card.type) ? 'spell' : card.type}${selected ? ' selected' : ''}${discardMode && selected ? ' discard-selected' : ''}" data-card-uid="${card.uid}" title="${safe(title)}" aria-label="${safe(ariaLabel)}" ${enabled ? '' : 'disabled'} style="animation-delay:${Math.min(index, 8) * 24}ms"><span class="card-type">${label}</span>${face}<span class="card-mark">${safe(card.name)}</span>${effect ? `<span class="card-effect">${safe(effect)}</span>` : ''}<span class="card-count">${String(index + 1).padStart(2, '0')}</span></button>`;
     }
-    function render() {
+    let lastHandHTML = '';
+    function doRender() {
       if (!gameState || !currentPlayer) return;
       const active = current();
       const matchWinners = (gameState.winnerIds || (gameState.winnerId ? [gameState.winnerId] : []))
@@ -1068,7 +1069,12 @@
       ui.endTurn.disabled = !(hasTurn() && (gameState.phase === 'PLAY' || gameState.phase === 'DISCARD'));
       ui.discardSelected.disabled = !(discardMode && selectedDiscardUids.size > 0);
       ui.hand.style.setProperty('--hand-size', Math.max(1, currentPlayer.hand.length));
-      ui.hand.innerHTML = currentPlayer.hand.map((card, index) => renderCard(card, index, hasTurn(), canRespond, canRescue, discardMode)).join('');
+      // 手牌 DOM 未变化时不要重建，避免每次重绘都触发牌面动画导致“手牌不停刷新/闪烁”。
+      const newHandHTML = currentPlayer.hand.map((card, index) => renderCard(card, index, hasTurn(), canRespond, canRescue, discardMode)).join('');
+      if (newHandHTML !== lastHandHTML) {
+        ui.hand.innerHTML = newHandHTML;
+        lastHandHTML = newHandHTML;
+      }
       const selectedKill = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'kill');
       const selectedHeal = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'heal');
       const selectedDodge = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'dodge');
@@ -1161,8 +1167,27 @@
       }
       bindHand();
     }
+    let renderScheduled = false;
+    function render() {
+      if (!gameState || !currentPlayer) return;
+      // 将同一帧内的多次 render 请求合并为一次 DOM 重绘，避免对局期间界面因高频重绘而闪烁/卡顿。
+      if (typeof requestAnimationFrame !== 'function') { doRender(); return; }
+      if (renderScheduled) return;
+      renderScheduled = true;
+      requestAnimationFrame(() => {
+        renderScheduled = false;
+        if (!gameState || !currentPlayer) return;
+        doRender();
+      });
+    }
     function bindHand() {
-      ui.hand.querySelectorAll('[data-card-uid]').forEach((button) => button.addEventListener('click', () => {
+      if (bindHand.bound) return;
+      bindHand.bound = true;
+      // 事件委托：只绑定一次，手牌/席位 innerHTML 被重建后无需重复绑定，
+      // 也避免保留手牌 DOM 后出现重复点击监听导致一次点击触发两次。
+      ui.hand.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-card-uid]');
+        if (!button) return;
         const uid = button.dataset.cardUid;
         if (gameState.phase === 'DISCARD' && hasTurn()) {
           if (selectedDiscardUids.has(uid)) selectedDiscardUids.delete(uid); else selectedDiscardUids.add(uid);
@@ -1182,57 +1207,66 @@
           selectedCardUid = uid;
         }
         playSound(); render();
-      }));
-      ui.seats.forEach((seat) => seat.querySelectorAll('[data-target-id]').forEach((button) => button.addEventListener('click', () => {
-        const selected = currentPlayer.hand.find((card) => card.uid === selectedCardUid);
-        if (gameState.phase === 'DYING' && gameState.pendingRescue?.targetId === currentPlayer.id && selected?.type === 'mutual-doom') {
-          const targetId = button.dataset.targetId;
-          const target = gameState.players.find((player) => player.id === targetId && player.alive && player.id !== currentPlayer.id && !isSpellImmune(player));
-          if (target && gameState.players.filter((player) => player.alive).length >= 3) {
-            useDoomCard(currentPlayer, target);
+      });
+      ui.seats.forEach((seat) => {
+        if (seat.dataset.handBound) return;
+        seat.dataset.handBound = '1';
+        seat.addEventListener('click', (event) => {
+          const targetButton = event.target.closest('[data-target-id]');
+          if (targetButton) {
+            const selected = currentPlayer.hand.find((card) => card.uid === selectedCardUid);
+            if (gameState.phase === 'DYING' && gameState.pendingRescue?.targetId === currentPlayer.id && selected?.type === 'mutual-doom') {
+              const targetId = targetButton.dataset.targetId;
+              const target = gameState.players.find((player) => player.id === targetId && player.alive && player.id !== currentPlayer.id && !isSpellImmune(player));
+              if (target && gameState.players.filter((player) => player.alive).length >= 3) {
+                useDoomCard(currentPlayer, target);
+                return;
+              }
+            }
+            if (!hasTurn() || gameState.phase !== 'PLAY' || !['kill', 'silence', 'ban', 'death-god', 'steal', 'love-god', 'special'].includes(selected?.type)) return;
+            if (selected.type === 'kill' && !canUseSlash(currentPlayer)) return;
+            if (selected.type === 'silence' && isSilenced(currentPlayer)) return;
+            const targetId = targetButton.dataset.targetId;
+            if (selected.type === 'love-god') {
+              if (selectedSecondaryTargetId === targetId) {
+                selectedSecondaryTargetId = null;
+              } else if (!selectedTargetId) {
+                selectedTargetId = targetId;
+              } else if (selectedTargetId === targetId) {
+                selectedTargetId = null;
+                selectedSecondaryTargetId = null;
+              } else if (!selectedSecondaryTargetId) {
+                selectedSecondaryTargetId = targetId;
+              } else {
+                selectedTargetId = targetId;
+                selectedSecondaryTargetId = null;
+              }
+            } else if (selected.type === 'silence') {
+              selectedTargetId = selectedTargetId === targetId ? null : targetId;
+              selectedSecondaryTargetId = null;
+            } else if (selectedSecondaryTargetId === targetId) {
+              selectedSecondaryTargetId = null;
+            } else if (!selectedTargetId) {
+              selectedTargetId = targetId;
+            } else if (selectedTargetId === targetId) {
+              selectedTargetId = null;
+              selectedSecondaryTargetId = null;
+            } else if (hasEquipment(currentPlayer, '爆炸弩') && areAdjacent(selectedTargetId, targetId)) {
+              selectedSecondaryTargetId = targetId;
+            } else {
+              selectedTargetId = targetId;
+              selectedSecondaryTargetId = null;
+            }
+            playSound(); render();
             return;
           }
-        }
-        if (!hasTurn() || gameState.phase !== 'PLAY' || !['kill', 'silence', 'ban', 'death-god', 'steal', 'love-god', 'special'].includes(selected?.type)) return;
-        if (selected.type === 'kill' && !canUseSlash(currentPlayer)) return;
-        if (selected.type === 'silence' && isSilenced(currentPlayer)) return;
-        const targetId = button.dataset.targetId;
-        if (selected.type === 'love-god') {
-          if (selectedSecondaryTargetId === targetId) {
-            selectedSecondaryTargetId = null;
-          } else if (!selectedTargetId) {
-            selectedTargetId = targetId;
-          } else if (selectedTargetId === targetId) {
-            selectedTargetId = null;
-            selectedSecondaryTargetId = null;
-          } else if (!selectedSecondaryTargetId) {
-            selectedSecondaryTargetId = targetId;
-          } else {
-            selectedTargetId = targetId;
-            selectedSecondaryTargetId = null;
+          const unequipButton = event.target.closest('[data-unequip-slot]');
+          if (unequipButton) {
+            if (unequipButton.disabled) return;
+            unequipWeapon();
           }
-        } else if (selected.type === 'silence') {
-          selectedTargetId = selectedTargetId === targetId ? null : targetId;
-          selectedSecondaryTargetId = null;
-        } else if (selectedSecondaryTargetId === targetId) {
-          selectedSecondaryTargetId = null;
-        } else if (!selectedTargetId) {
-          selectedTargetId = targetId;
-        } else if (selectedTargetId === targetId) {
-          selectedTargetId = null;
-          selectedSecondaryTargetId = null;
-        } else if (hasEquipment(currentPlayer, '爆炸弩') && areAdjacent(selectedTargetId, targetId)) {
-          selectedSecondaryTargetId = targetId;
-        } else {
-          selectedTargetId = targetId;
-          selectedSecondaryTargetId = null;
-        }
-        playSound(); render();
-      })));
-      ui.seats.forEach((seat) => seat.querySelectorAll('[data-unequip-slot]').forEach((button) => button.addEventListener('click', () => {
-        if (button.disabled) return;
-        unequipWeapon();
-      })));
+        });
+      });
     }
     function equipCard(actor = currentPlayer) {
       if (!hasTurn(actor) || gameState.phase !== 'PLAY' || isSilenced(actor)) return;
@@ -1348,6 +1382,7 @@
       const amount = healAmountFor(actor);
       actor.hp = Math.min(actor.maxHp, actor.hp + amount);
       addLog(`${actor.nickname} 使用奶，恢复 ${amount} 点生命，当前生命 ${actor.hp}/${actor.maxHp}。`);
+      drawAfterHeal(actor);
       selectedCardUid = null;
       selectedTargetId = null;
       selectedSecondaryTargetId = null;
@@ -1370,10 +1405,20 @@
       const skill = [actor.hero?.primarySkill, actor.hero?.secondarySkill]
         .find((item) => item?.templateId === 'DODGE_AS_HEAL');
       addLog(`${actor.nickname} 发动「${skill?.name || '闪转回春'}」，将闪当作奶，恢复 ${amount} 点生命。`);
+      drawAfterHeal(actor);
       selectedCardUid = null;
       selectedTargetId = null;
       selectedSecondaryTargetId = null;
       persistGame(); playSound(); render();
+    }
+    function drawAfterHeal(player) {
+      const skill = getSkill(player, 'MERCIFUL_DRAW');
+      if (!skill) return;
+      player.skillUsage = player.skillUsage || {};
+      if (player.skillUsage.mercifulDrawRound === gameState.round) return;
+      player.skillUsage.mercifulDrawRound = gameState.round;
+      const drawn = drawCards(gameState, player, skill.value);
+      addLog(`${player.nickname} 发动「${skill.name}」，使用奶后摸 ${drawn} 张牌。`);
     }
     function spendCard(actor, card) {
       actor.hand = actor.hand.filter((item) => item.uid !== card.uid);
@@ -1703,6 +1748,22 @@
         addLog(`${caster.nickname} 发动「${skillName}」，本回合内受到的第一次伤害减少 2 点。`);
         return;
       }
+      if (skillId === 'SPECIAL_DRAW_2') {
+        const drawn = drawCards(gameState, caster, 2);
+        addLog(`${caster.nickname} 发动「${skillName}」，立即摸 ${drawn} 张牌。`);
+        return;
+      }
+      if (skillId === 'SPECIAL_DISCARD_TARGET') {
+        const toDiscard = Math.min(2, target.hand.length);
+        for (let index = 0; index < toDiscard; index += 1) {
+          const cardIndex = Math.floor(Math.random() * target.hand.length);
+          const discarded = target.hand.splice(cardIndex, 1)[0];
+          gameState.discardPile.push(discarded);
+        }
+        if (toDiscard > 0) addLog(`${caster.nickname} 发动「${skillName}」，随机弃置 ${target.nickname} 的 ${toDiscard} 张手牌。`);
+        else addLog(`${caster.nickname} 发动「${skillName}」，但 ${target.nickname} 没有手牌可弃。`);
+        return;
+      }
       addLog(`${caster.nickname} 发动「${card.name}」，但效果尚未配置。`);
     }
     function applyLoveGod(caster, ids) {
@@ -1802,6 +1863,20 @@
         target.weapon = null;
       }
       addLog(`${target.nickname}${timedOut ? '救治超时，' : ''}被击败，退出本局。`);
+      // 击杀奖励：DRAW_ON_KILL / HEAL_ON_KILL 在击败对手后立即结算。
+      if (attacker && attacker.id !== target.id && attacker.alive) {
+        const killDraw = getSkill(attacker, 'DRAW_ON_KILL');
+        if (killDraw) {
+          const drawn = drawCards(gameState, attacker, 2);
+          addLog(`${attacker.nickname} 发动「${killDraw.name}」，击杀后摸 ${drawn} 张牌。`);
+        }
+        const killHeal = getSkill(attacker, 'HEAL_ON_KILL');
+        if (killHeal) {
+          const amount = Math.min(2, attacker.maxHp - attacker.hp);
+          attacker.hp += amount;
+          addLog(`${attacker.nickname} 发动「${killHeal.name}」，击杀后恢复 ${amount} 点生命。`);
+        }
+      }
       if (finishSurvivalMatchIfNeeded()) return;
       if (gameState.pendingAttack) {
         gameState.pendingAttack.resolvedTargetIds = [...(gameState.pendingAttack.resolvedTargetIds || []), target.id];
@@ -1855,7 +1930,14 @@
       const attacker = gameState.players.find((player) => player.id === pending.attackerId);
       let target = gameState.players.find((player) => player.id === pending.targetId);
       if (!attacker || !target) return;
-      if (dodged) addLog(`${target.nickname} 打出${responseName}，成功抵消杀。`);
+      if (dodged) {
+        addLog(`${target.nickname} 打出${responseName}，成功抵消杀。`);
+        const dodgeDraw = getSkill(target, 'DODGE_DRAW');
+        if (dodgeDraw) {
+          const drawn = drawCards(gameState, target, dodgeDraw.value);
+          addLog(`${target.nickname} 发动「${dodgeDraw.name}」，闪避后摸 ${drawn} 张牌。`);
+        }
+      }
       else {
         let damage = 1;
         attacker.skillUsage = attacker.skillUsage || {};
@@ -1956,6 +2038,7 @@
       }
       gameState.pendingRescue = null;
       addLog(`${target.nickname} 使用奶自救，生命恢复至 ${target.hp}/${target.maxHp}。`);
+      drawAfterHeal(target);
       if (pending.returnPhase === 'DRAWING' && pending.returnPlayerId === target.id && target.alive && gameState.status !== 'ENDED') {
         gameState.phase = 'DRAWING';
         gameState.responseDeadline = null;
@@ -2413,6 +2496,10 @@
         if (!gameState) tryStartGame();
         return;
       }
+      // 房间 revision 未变化时说明是冗余的 SSE 快照（例如自己刚提交、其它页面轻量刷新），
+      // 直接跳过，避免对局期间因重复快照而高频重绘导致界面闪烁。
+      if (gameState && latestRoom.revision === handleRemoteGameUpdate.lastRevision) return;
+      handleRemoteGameUpdate.lastRevision = latestRoom.revision;
       roomData = latestRoom;
       gameState = latestRoom.game;
       refreshPlayerHeroes(roomData);

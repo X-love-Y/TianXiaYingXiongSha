@@ -274,7 +274,7 @@
                 <span class="card-title">${escapeHtml(hero.heroName)}${roleLabel ? `（${roleLabel}）` : ''}</span>
                 <span class="card-number">${String(index + 1).padStart(2, '0')}</span>
               </div>
-              <div class="review-row"><span>血量</span><strong>${hero.maxHp || (2 + (hero.maxHpBonus || 0))}</strong></div>
+              <div class="review-row"><span>血量</span><strong>${hero.maxHp || 5}</strong></div>
               <div class="review-row"><span>主技能</span><strong>${escapeHtml(hero.primarySkill?.name || '')}</strong><small>${escapeHtml(hero.primarySkill?.description || '')}</small></div>
               <div class="review-row"><span>副技能</span><strong>${escapeHtml(hero.secondarySkill?.name || '')}</strong><small>${escapeHtml(hero.secondarySkill?.description || '')}</small></div>
               <div class="review-row"><span>特技</span><strong>${escapeHtml(hero.specialSkill?.name || '')}</strong><small>${escapeHtml(hero.specialSkill?.description || '')}</small></div>

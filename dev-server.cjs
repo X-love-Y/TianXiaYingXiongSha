@@ -106,6 +106,23 @@ function broadcastRooms() {
   });
 }
 
+// 高频房间变更（对局内每步、生成进度等）在极短时间内会触发大量 broadcast，
+// 在低配服务器上会向所有客户端推送一串完整房间快照，导致对局界面高频重绘/闪烁。
+// 这里用 40ms 去抖合并，把同一小段时间内的变更合并为一次推送。
+let broadcastTimer = null;
+let broadcastDirty = false;
+function scheduleBroadcast() {
+  broadcastDirty = true;
+  if (broadcastTimer) return;
+  broadcastTimer = setTimeout(() => {
+    broadcastTimer = null;
+    if (broadcastDirty) {
+      broadcastDirty = false;
+      broadcastRooms();
+    }
+  }, 40);
+}
+
 function applyRoomSnapshot(nextRooms) {
   const currentRooms = rooms;
   const mergedRooms = normalizeRooms(nextRooms);
@@ -113,7 +130,7 @@ function applyRoomSnapshot(nextRooms) {
     preserveAiConfig(currentRooms[roomCode], room);
   });
   rooms = mergedRooms;
-  broadcastRooms();
+  scheduleBroadcast();
   return { ok: true, rooms, updatedAt: Date.now() };
 }
 
@@ -205,7 +222,7 @@ function applyRoomChanges(changes, knownRevisions = {}, actorPlayerId = null) {
   }
 
   rooms = normalizeRooms(nextRooms);
-  broadcastRooms();
+  scheduleBroadcast();
   return { ok: true, rooms, updatedAt: Date.now() };
 }
 
@@ -233,7 +250,7 @@ function cleanupRooms() {
     }
   });
 
-  if (changed) broadcastRooms();
+  if (changed) scheduleBroadcast();
 }
 
 function allPlayersSubmitted(room) {
@@ -278,9 +295,10 @@ async function generateRoomHeroes(roomCode) {
       totalCount: room.players.length * 5
     };
     touchRoom(room);
-    broadcastRooms();
+    scheduleBroadcast();
 
     const usedSkillNames = new Set();
+    const usedSkillIdsByPlayer = {};
     const llmEnabled = Boolean(process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
     const allCards = [];
     room.players.forEach((player) => {
@@ -298,6 +316,8 @@ async function generateRoomHeroes(roomCode) {
       const aiConfig = room.aiConfig || {};
       const hero = await generateHero(card, {
         usedNames: Array.from(usedSkillNames),
+        // 只在本名玩家的 5 张卡内避免重复技能，允许跨玩家复用（库容量有限，无法做到全房间不重样）。
+        blockedSkillIds: Array.from(usedSkillIdsByPlayer[card.playerId] || []),
         preferredPrimarySkillId: planned?.primaryId || null,
         preferredSecondarySkillId: planned?.secondaryId || null,
         preferredSpecialSkillId: planned?.specialId || null,
@@ -310,11 +330,13 @@ async function generateRoomHeroes(roomCode) {
       hero.authorId = card.playerId;
       (generatedByPlayer[card.playerId] = generatedByPlayer[card.playerId] || []).push(hero);
       [hero.primarySkill?.name, hero.secondarySkill?.name, hero.specialSkill?.name].filter(Boolean).forEach((skillName) => usedSkillNames.add(skillName));
+      const playerUsed = usedSkillIdsByPlayer[card.playerId] = usedSkillIdsByPlayer[card.playerId] || [];
+      [hero.primarySkill?.templateId, hero.secondarySkill?.templateId, hero.specialSkill?.templateId].filter(Boolean).forEach((skillId) => playerUsed.push(skillId));
       const currentRoom = rooms[roomCode];
       if (currentRoom?.heroGeneration?.status === 'RUNNING') {
         currentRoom.heroGeneration.completedCount += 1;
         currentRoom.updatedAt = Date.now();
-        broadcastRooms();
+        scheduleBroadcast();
       }
     }
 
@@ -340,7 +362,7 @@ async function generateRoomHeroes(roomCode) {
     delete currentRoom.finalHeroes;
     currentRoom.phase = 'REVIEWING';
     touchRoom(currentRoom);
-    broadcastRooms();
+    scheduleBroadcast();
   })().catch((error) => {
     const room = rooms[roomCode];
     if (room) {
@@ -351,7 +373,7 @@ async function generateRoomHeroes(roomCode) {
       };
       room.phase = 'CUSTOMIZING';
       touchRoom(room);
-      broadcastRooms();
+      scheduleBroadcast();
     }
     console.error(`Room ${roomCode} hero generation failed:`, error);
   }).finally(() => generationJobs.delete(roomCode));
@@ -389,7 +411,7 @@ async function handleApi(request, response, requestPath) {
       if (payload && typeof payload.changes === 'object' && payload.changes && !Array.isArray(payload.changes)) {
         const result = applyRoomChanges(payload.changes, payload.knownRevisions || {}, payload.actorPlayerId || null);
         sendJson(response, result.ok ? 200 : 409, result);
-        if (!result.ok) broadcastRooms();
+        if (!result.ok) scheduleBroadcast();
       } else if (payload && typeof payload.rooms === 'object' && !Array.isArray(payload.rooms)) {
         const result = applyRoomSnapshot(payload.rooms);
         sendJson(response, 200, result);
@@ -449,7 +471,7 @@ async function handleApi(request, response, requestPath) {
       room.heroGeneration = { status: 'WAITING' };
       room.phase = 'CUSTOMIZING';
       touchRoom(room);
-      broadcastRooms();
+      scheduleBroadcast();
       if (allPlayersSubmitted(room)) void generateRoomHeroes(roomCode);
       sendJson(response, 202, { ok: true, room, generationStarted: allPlayersSubmitted(room) });
     } catch {
@@ -476,7 +498,7 @@ async function handleApi(request, response, requestPath) {
       room.confirmations = room.confirmations || {};
       room.confirmations[player.id] = true;
       touchRoom(room);
-      broadcastRooms();
+      scheduleBroadcast();
       if (allConfirmed(room)) {
         // 洗乱 20 张英雄卡，随机分发每人 5 张，进入选将阶段。
         const allHeroes = [];
@@ -491,7 +513,7 @@ async function handleApi(request, response, requestPath) {
         room.phase = 'SELECTING';
         room.selectDeadline = Date.now() + 60 * 1000;
         touchRoom(room);
-        broadcastRooms();
+        scheduleBroadcast();
       }
       sendJson(response, 200, { ok: true, room });
     } catch {
@@ -527,7 +549,7 @@ async function handleApi(request, response, requestPath) {
       room.picks = room.picks || {};
       room.picks[player.id] = { mainHeroId, secondaryHeroId };
       touchRoom(room);
-      broadcastRooms();
+      scheduleBroadcast();
       if (allPicked(room)) {
         const allHeroes = [];
         Object.values(room.generatedHeroes).forEach((heroes) => allHeroes.push(...heroes));
@@ -542,7 +564,7 @@ async function handleApi(request, response, requestPath) {
         room.specialCards = specialHeroes.map((hero, index) => ({
           uid: `special-${index + 1}`,
           type: 'special',
-          name: `${hero.heroName}-特技`,
+          name: `${hero.heroName}--${hero.specialSkill?.name || '特技'}`,
           effect: hero.specialSkill?.description || '施展英雄的独门特技。',
           specialSkill: hero.specialSkill,
           heroName: hero.heroName
@@ -564,7 +586,7 @@ async function handleApi(request, response, requestPath) {
         room.phase = 'PLAYING';
         room.startedAt = room.startedAt || Date.now();
         touchRoom(room);
-        broadcastRooms();
+        scheduleBroadcast();
       }
       sendJson(response, 200, { ok: true, room });
     } catch {
