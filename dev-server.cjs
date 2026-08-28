@@ -309,6 +309,7 @@ function applyRoomAction(response, roomCode, session, payload, room) {
   const snapshot = session.snapshot();
   room.game = snapshot;
   session.lastFingerprint = gameFingerprint(snapshot);
+  room.revision = (room.revision || 0) + 1;
   room.updatedAt = Date.now();
   scheduleBroadcast();
   sendJson(response, 200, { ok: true, room, game: snapshot, playerId });
@@ -742,6 +743,7 @@ function serverGameLoop() {
       if (session.lastFingerprint === fingerprint) return;
       session.lastFingerprint = fingerprint;
       room.game = snapshot;
+      room.revision = (room.revision || 0) + 1;
       room.updatedAt = Date.now();
       scheduleBroadcast();
     } catch (error) {

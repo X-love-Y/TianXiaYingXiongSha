@@ -70,6 +70,9 @@ function makeSandbox(room, session, timers, localStore, sessionStore, net) {
     Math,
     Date,
     JSON,
+    // 该 harness 模拟“对局引擎”，与服务器复用的引擎一致（SERVER_AUTH=false），
+    // 避免客户端瘦身（SERVER_AUTH=true）导致动作被重定向到不存在的 fetch。
+    __SERVER_AUTH: false,
     Object,
     Array,
     Map,

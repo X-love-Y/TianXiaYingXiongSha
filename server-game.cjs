@@ -80,6 +80,8 @@ function makeSandbox(room) {
   const sandbox = {
     console, Math, Date, JSON, Object, Array, Map, Set, Promise, String, Number, Boolean, RegExp, Error,
     parseInt, parseFloat, isNaN,
+    // 服务器端复用该引擎用于“推进对局”（SERVER_AUTH=false）；浏览器端默认 true（瘦客户端）。
+    __SERVER_AUTH: false,
     setTimeout: (fn, ms = 0) => { const id = ++timers.seq; timers.items.set(id, { fn, ms, interval: false, at: timers.now + ms, order: timers.order++ }); return id; },
     setInterval: (fn, ms = 0) => { const id = ++timers.seq; timers.items.set(id, { fn, ms, interval: true, at: timers.now + ms, order: timers.order++ }); return id; },
     clearTimeout: (id) => timers.items.delete(id),
@@ -122,6 +124,12 @@ class GameSession {
     this.sandbox = makeSandbox(room);
     this.eval = this.sandbox.eval;
     this.lastSnapshot = null;
+    // 服务器权威：脚本内的 loadOrCreateGame 已不再本地建局（SERVER_AUTH=true），
+    // 因此这里由服务端显式调用 createGame 建立唯一对局状态。
+    if (!this.eval('gameState && gameState.status === "PLAYING"')) {
+      this.eval(`gameState = createGame(${JSON.stringify(room)});`);
+    }
+    this.eval('if (roomData) roomData.game = gameState;');
     this.initialized = Boolean(this.eval('gameState && gameState.status === "PLAYING"'));
   }
 
