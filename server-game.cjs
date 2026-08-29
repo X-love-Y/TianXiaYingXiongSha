@@ -178,15 +178,13 @@ class GameSession {
     if (type === 'rescue-heal') return commit(`useRescueHeal();`);
     if (type === 'refuse-rescue') return commit(`takeDamage();`);
     if (type === 'doom') {
-      ev(`const __doomTarget = gameState.players.find((p) => p.id === ${q(event.targetId)});`);
-      return commit(`useDoomCard(currentPlayer, __doomTarget);`);
+      return commit(`useDoomCard(currentPlayer, gameState.players.find((p) => p.id === ${q(event.targetId)}));`);
     }
     if (type === 'manual-discard') return commit(`startManualDiscard();`);
     if (type === 'discard') return commit(`discardSelected();`);
     if (type === 'play') {
       if (!cardUid) return commit('addLog("RPC 缺少 cardUid"); false;');
-      ev(`const __card = currentPlayer.hand.find((c) => c.uid === ${q(cardUid)});`);
-      const cardType = ev('__card ? __card.type : null');
+      const cardType = ev(`(currentPlayer.hand.find((c) => c.uid === ${q(cardUid)}) || {}).type || null`);
       const route = {
         kill: 'playKill()',
         heal: 'useHealCard()',
