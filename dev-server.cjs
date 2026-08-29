@@ -750,6 +750,23 @@ function serverGameLoop() {
       console.error(`Room ${roomCode} authoritative game loop error:`, error);
     }
   });
+  // 兜底：已进入对局但尚未生成权威 game 的房间，补建会话并写入 room.game，
+  // 避免个别客户端因时序错过创建而一直停在“等待对局状态”。
+  Object.keys(rooms).forEach((roomCode) => {
+    const room = rooms[roomCode];
+    if (room?.phase !== 'PLAYING' || room.game || roomSessions.has(roomCode)) return;
+    try {
+      const session = createSession(room);
+      roomSessions.set(roomCode, session);
+      room.game = session.snapshot();
+      session.lastFingerprint = gameFingerprint(room.game);
+      room.revision = (room.revision || 0) + 1;
+      room.updatedAt = Date.now();
+      scheduleBroadcast();
+    } catch (error) {
+      console.error(`Room ${roomCode} authoritative session backfill failed:`, error);
+    }
+  });
 }
 
 http.createServer(async (request, response) => {

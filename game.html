@@ -2588,7 +2588,12 @@
         window.location.replace('lobby.html');
         return;
       }
-      ui.notice.textContent = '正在等待房主创建对局状态...';
+      ui.notice.textContent = '正在等待对局状态就绪…';
+      // 服务器权威：主动向服务器拉取最新房间，确保 room.game 同步到本地，
+      // 避免仅依赖 SSE 时因时序/网络导致一直停在“等待创建对局状态”。
+      if (window.HeroKillNet) {
+        window.HeroKillNet.loadRooms().catch(() => {});
+      }
       setTimeout(() => {
         tryStartGame();
       }, 650);
