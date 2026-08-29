@@ -215,9 +215,12 @@
     let roomSession;
 
     try {
-      roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey));
+      roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey) || localStorage.getItem(sessionStorageKey));
     } catch {
       roomSession = null;
+    }
+    if (roomSession?.roomCode && roomSession?.playerId && window.HeroKillNet) {
+      setInterval(() => window.HeroKillNet.heartbeat(roomSession.roomCode, roomSession.playerId), 10000);
     }
 
     function getRooms() {

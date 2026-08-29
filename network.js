@@ -64,6 +64,18 @@
     }
   }
 
+  async function heartbeat(roomCode, playerId) {
+    if (!canUseNetwork() || !roomCode || !playerId) return;
+    try {
+      await request(`/api/rooms/${roomCode}/heartbeat`, {
+        method: 'POST',
+        body: JSON.stringify({ playerId })
+      });
+    } catch {
+      // 心跳失败可能是网络抖动/页面刚加载，静默忽略，下一次重试。
+    }
+  }
+
   function buildRoomChanges(rooms) {
     const currentRooms = rooms || {};
     const changes = {};
@@ -179,7 +191,8 @@
     loadRooms,
     saveRooms,
     connectRooms,
-    readLocalRooms
+    readLocalRooms,
+    heartbeat
   };
 
   connectRooms();

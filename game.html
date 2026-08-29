@@ -212,6 +212,7 @@
     .status-badge.silence { color: #d6c5ff; border-color: rgba(155, 132, 211, .55); background: rgba(83, 66, 111, .4); }
     .status-badge.doom { color: #f0a59a; border-color: rgba(238, 132, 118, .68); background: rgba(124, 48, 58, .5); }
     .status-badge.skip { color: #ffe1a8; border-color: rgba(217, 183, 109, .55); background: rgba(120, 82, 35, .35); }
+    .status-badge.offline { color: #9aa2ad; border-color: rgba(140, 148, 158, .5); background: rgba(70, 76, 84, .4); }
     .tip { position: relative; cursor: help; }
     .tip::after {
       content: attr(data-tip);
@@ -515,7 +516,12 @@
     let tickTimer = null;
     let botTimer = null;
 
-    try { roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey)); } catch { roomSession = null; }
+    // 优先读会话、其次读本地持久化会话（离线重开浏览器也能回到对局）。
+    try { roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey) || localStorage.getItem(sessionStorageKey)); } catch { roomSession = null; }
+    // 心跳上报：让服务器知道该玩家在线，用于检测离线并开放空缺席位接管。
+    if (roomSession?.roomCode && roomSession?.playerId && window.HeroKillNet) {
+      setInterval(() => window.HeroKillNet.heartbeat(roomSession.roomCode, roomSession.playerId), 10000);
+    }
 
     const $ = (id) => document.getElementById(id);
     const ui = {
@@ -958,6 +964,8 @@
       if (effects.silenceActive) badges.push({ text: '沉默中', className: 'silence' });
       if ((effects.silencePendingTurns || 0) > 0) badges.push({ text: '下回合沉默', className: 'silence' });
       if (gameState.phase === 'DYING' && gameState.pendingRescue?.targetId === player.id) badges.push({ text: '濒死', className: 'doom' });
+      const roomPlayer = roomData?.players?.find((item) => item.id === player.id);
+      if (roomPlayer && roomPlayer.online === false) badges.push({ text: '离线', className: 'offline' });
       if (player.id === gameState.currentPlayerId && gameState.phase === 'DRAWING' && gameState.skipPlayRound === gameState.round) {
         badges.push({ text: '本回合跳过出牌', className: 'skip' });
       }
@@ -2550,7 +2558,7 @@
     ui.directPass.addEventListener('click', () => { ui.turnDialog.close(); directPass(); });
     ui.turnDialog.addEventListener('click', (event) => { if (event.target === ui.turnDialog) ui.turnDialog.close(); });
     ui.cardGuideDialog.addEventListener('click', (event) => { if (event.target === ui.cardGuideDialog) ui.cardGuideDialog.close(); });
-    ui.backLobby.addEventListener('click', () => { sessionStorage.removeItem(sessionStorageKey); window.location.href = 'lobby.html'; });
+    ui.backLobby.addEventListener('click', () => { sessionStorage.removeItem(sessionStorageKey); localStorage.removeItem(sessionStorageKey); window.location.href = 'lobby.html'; });
 
     function handleRemoteGameUpdate() {
       const latestRoom = getRooms()[roomSession.roomCode];
@@ -2577,14 +2585,18 @@
       tickTimer = setInterval(tick, 250);
     }
 
-    function tryStartGame() {
+    async function tryStartGame() {
       const status = loadOrCreateGame();
       if (status === 'ready') {
         startGameLoop();
         return;
       }
       if (status === 'missing') {
+        // 可能是本地尚未同步到/服务器刚重启：先向服务器拉一次，仍缺失才退出对局。
+        try { if (window.HeroKillNet) await window.HeroKillNet.loadRooms(); } catch {}
+        if (loadOrCreateGame() === 'ready') { startGameLoop(); return; }
         sessionStorage.removeItem(sessionStorageKey);
+        localStorage.removeItem(sessionStorageKey);
         window.location.replace('lobby.html');
         return;
       }
@@ -2599,22 +2611,41 @@
       }, 650);
     }
 
-    if (!roomSession || !/^\d{6}$/.test(roomSession.roomCode)) {
-      window.location.replace('lobby.html');
-    } else {
-      const entryRoom = getRooms()[roomSession.roomCode];
-      if (entryRoom?.phase === 'SELECTING') {
-        window.location.replace('select.html');
-      } else if (entryRoom?.phase !== 'PLAYING' || !roomHasReadyHeroes(entryRoom)) {
-        window.location.replace('customize.html');
-      } else {
-        window.addEventListener('storage', (event) => {
-          if (event.key !== roomStorageKey) return;
-          handleRemoteGameUpdate();
-        });
-        tryStartGame();
+    (async function bootstrapGame() {
+      if (!roomSession || !/^\d{6}$/.test(roomSession.roomCode)) {
+        window.location.replace('lobby.html');
+        return;
       }
-    }
+      // 进入对局前先向服务器同步一次房间，避免本地存储丢失/服务器重启时把玩家误踢出对局。
+      try { if (window.HeroKillNet) await window.HeroKillNet.loadRooms(); } catch {}
+      const entryRoom = getRooms()[roomSession.roomCode];
+      if (!entryRoom) {
+        sessionStorage.removeItem(sessionStorageKey);
+        localStorage.removeItem(sessionStorageKey);
+        window.location.replace('lobby.html');
+        return;
+      }
+      if (entryRoom.phase === 'SELECTING') {
+        window.location.replace('select.html');
+        return;
+      }
+      if (entryRoom.phase === 'ENDED') {
+        sessionStorage.removeItem(sessionStorageKey);
+        localStorage.removeItem(sessionStorageKey);
+        window.location.replace('lobby.html');
+        return;
+      }
+      if (entryRoom.phase !== 'PLAYING' || !roomHasReadyHeroes(entryRoom)) {
+        window.location.replace('customize.html');
+        return;
+      }
+      window.addEventListener('storage', (event) => {
+        if (event.key !== roomStorageKey) return;
+        handleRemoteGameUpdate();
+      });
+      if (window.HeroKillNet) window.HeroKillNet.connectRooms();
+      tryStartGame();
+    })();
   </script>
 </body>
 </html>

@@ -513,6 +513,14 @@
         <h1 id="lobby-title">大厅主菜单</h1>
         <p class="menu-copy">创建一场新对局，或凭房间号加入其他玩家。</p>
 
+        <div id="resumeBar" class="resume-bar" hidden style="margin-top: 18px;">
+          <button class="menu-button primary sound-button" id="resumeButton" type="button">
+            <span class="button-mark" aria-hidden="true">回</span>
+            <span class="button-label">回到进行中的对局</span>
+            <span class="button-note">断线重连</span>
+          </button>
+        </div>
+
         <div class="menu-actions">
           <button class="menu-button primary sound-button" type="button" data-dialog="createDialog">
             <span class="button-mark" aria-hidden="true">创</span>
@@ -788,6 +796,21 @@
       return roomCode;
     }
 
+    async function takeoverSeat(roomCode, nickname) {
+      try {
+        const response = await fetch(`/api/rooms/${roomCode}/takeover`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nickname })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return { ok: false, message: payload.message || '接管该席位失败，请稍后重试。' };
+        return { ok: true, playerId: payload.playerId, nickname: payload.nickname };
+      } catch {
+        return { ok: false, message: '网络异常，接管该席位失败。' };
+      }
+    }
+
     function playSound() {
       sound.currentTime = 0;
       sound.play().catch(() => {});
@@ -883,7 +906,9 @@
 
       rooms[roomCode] = roomData;
       await saveRooms(rooms);
-      sessionStorage.setItem(sessionStorageKey, JSON.stringify({ roomCode, playerId }));
+      const nextSession = JSON.stringify({ roomCode, playerId });
+      sessionStorage.setItem(sessionStorageKey, nextSession);
+      localStorage.setItem(sessionStorageKey, nextSession);
       document.getElementById('createDialog').close();
       showToast(`房间 ${roomCode} 创建成功，正在进入等待大厅。`);
       setTimeout(() => {
@@ -913,6 +938,22 @@
         return;
       }
 
+      // 对局进行中的房间：尝试接管离线玩家留下的空缺席位，而不是作为新玩家加入。
+      if (room.phase === 'PLAYING') {
+        const takeover = await takeoverSeat(roomCode, nickname);
+        if (takeover.ok) {
+          const nextSession = JSON.stringify({ roomCode, playerId: takeover.playerId });
+          sessionStorage.setItem(sessionStorageKey, nextSession);
+          localStorage.setItem(sessionStorageKey, nextSession);
+          document.getElementById('joinDialog').close();
+          showToast('已接管对局空缺席位，正在返回对局。');
+          setTimeout(() => { window.location.href = 'game.html'; }, 420);
+          return;
+        }
+        showJoinMessage(takeover.message || '该房间没有空缺席位可以接管。');
+        return;
+      }
+
       if (room.players.length >= maxPlayers) {
         showJoinMessage('房间人数已满，暂时无法加入。');
         return;
@@ -926,13 +967,29 @@
       const playerId = createId();
       room.players.push({ id: playerId, nickname, role: 'guest', ready: false });
       await saveRooms(rooms);
-      sessionStorage.setItem(sessionStorageKey, JSON.stringify({ roomCode, playerId }));
+      const nextSession = JSON.stringify({ roomCode, playerId });
+      sessionStorage.setItem(sessionStorageKey, nextSession);
+      localStorage.setItem(sessionStorageKey, nextSession);
       document.getElementById('joinDialog').close();
       showToast(`已加入房间 ${roomCode}，正在进入等待大厅。`);
       setTimeout(() => {
         window.location.href = 'waiting-room.html';
       }, 420);
     });
+
+    // 断线/重新打开浏览器后，若有进行中的对局，提供“回到对局”入口。
+    const resumeBar = document.getElementById('resumeBar');
+    const resumeButton = document.getElementById('resumeButton');
+    resumeButton.addEventListener('click', () => { window.location.href = 'game.html'; });
+    async function checkResume() {
+      if (window.HeroKillNet) { try { await window.HeroKillNet.loadRooms(); } catch {} }
+      let session = null;
+      try { session = JSON.parse(sessionStorage.getItem(sessionStorageKey) || localStorage.getItem(sessionStorageKey)); } catch {}
+      if (!session || !/^\d{6}$/.test(session.roomCode)) return;
+      const room = getRooms()[session.roomCode];
+      if (room?.phase === 'PLAYING' && room.game) resumeBar.hidden = false;
+    }
+    checkResume();
   </script>
 </body>
 </html>

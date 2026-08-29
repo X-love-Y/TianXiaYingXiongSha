@@ -236,7 +236,7 @@ const HERO_SCHEMA = {
       maxItems: 5,
       items: { type: 'string', minLength: 1, maxLength: 10 }
     },
-    maxHp: { type: 'integer', minimum: 5, maximum: 10 },
+    maxHp: { type: 'integer', minimum: 3, maximum: 7 },
     primarySkill: SKILL_SCHEMA,
     secondarySkill: SKILL_SCHEMA,
     specialSkill: SPECIAL_SCHEMA,
@@ -539,7 +539,7 @@ function uniquifySkillName(baseName, usedNames) {
   return null;
 }
 
-// 血量是卡牌固有属性（5-10 滴），根据人物特色由服务端复核，而不是由技能决定。
+// 血量是卡牌固有属性（3-7 滴），根据人物特色由服务端复核，而不是由技能决定。
 function hashString(text) {
   let hash = 0;
   for (let index = 0; index < text.length; index += 1) {
@@ -551,24 +551,24 @@ function hashString(text) {
 
 function computeMaxHp(name, description) {
   const text = `${String(name || '')}${String(description || '')}`.toLowerCase();
-  let score = 7;
+  let score = 5;
   // 偏重甲/防御/力量的人物通常血量更高；敏捷/法师/脆皮的人物通常血量偏低。
   const tankyWords = ['坦克', '肉盾', '盾', '防御', '强壮', '巨人', '血厚', '耐揍', '皮糙', '守护', '铁壁', '重装', '力量', '肌肉', '大力', '结实', '金刚', '坚', '厚重', '耐打', '耐抗'];
   const agileWords = ['敏捷', '灵巧', '身法', '刺客', '法师', '脆', '轻盈', '走位', '迅捷', '疾', '轻', '谋士', '智', '快攻', '速度', '灵', '脆皮', '轻盈', '轻功', '快'];
   for (const word of tankyWords) if (text.includes(word)) score += 1;
   for (const word of agileWords) if (text.includes(word)) score -= 1;
-  // 让同一房间内不同英雄的血量有一定差异，但始终落在 5-10 之间。
+  // 让同一房间内不同英雄的血量有一定差异，但始终落在 3-7 之间。
   score += (hashString(text + 'hp') % 3) - 1;
-  return Math.max(5, Math.min(10, score));
+  return Math.max(3, Math.min(7, score));
 }
 
 function resolveMaxHp(rawMaxHp, name, description) {
   const heuristic = computeMaxHp(name, description);
   const value = Number(rawMaxHp);
-  if (Number.isInteger(value) && value >= 5 && value <= 10) {
-    // 服务端复核：允许 AI 在 5-10 之间给出，但不得与人物特色基础值偏离超过 2 点。
+  if (Number.isInteger(value) && value >= 3 && value <= 7) {
+    // 服务端复核：允许 AI 在 3-7 之间给出，但不得与人物特色基础值偏离超过 2 点。
     if (Math.abs(value - heuristic) <= 2) return value;
-    return Math.max(5, Math.min(10, heuristic + (value > heuristic ? 2 : -2)));
+    return Math.max(3, Math.min(7, heuristic + (value > heuristic ? 2 : -2)));
   }
   return heuristic;
 }
@@ -832,7 +832,7 @@ function buildDeepSeekMessages(input, validationError, options = {}) {
     '不要默认选择 FIRST_DAMAGE_REDUCTION + DODGE_AS_HEAL；除非人物描述明显偏防御、守护或治疗。进攻、舞台、收集、受伤反打、治疗、速度等特质应优先选择对应的不同模板。',
     '同一局里已经使用过的技能效果不能再次选择，必须避开这些 templateId。',
     '技能名称也要与同一局里已经使用的名称不同，结合人物特点创作，避免使用与示例或兜底模板相同的名称。',
-    'maxHp 是根据人物特色选择的整数，范围 5 到 10 之间：坦克、重装、防御、力量型人物偏高（8-10），敏捷、法师、刺客、脆皮型人物偏低（5-7），其余取 7 或 8。',
+    'maxHp 是根据人物特色选择的整数，范围 3 到 7 之间：坦克、重装、防御、力量型人物偏高（6-7），敏捷、法师、刺客、脆皮型人物偏低（3-4），其余取 5 或 6。',
     'primarySkill 和 secondarySkill 必须是 JSON 对象，且必须完整包含 templateId、name、value 三个字段。',
     'specialSkill 必须是特技库中的技能，作为一张一次性特技牌使用，且与主技能、副技能互不重复。',
     '只能选择输入中提供的技能 ID 和数值；主技能预算不超过 5，副技能预算不超过 3，主副技能不得重复。',
@@ -878,7 +878,7 @@ async function requestModel(input, validationError = '', options = {}) {
       '不要默认选择 FIRST_DAMAGE_REDUCTION + DODGE_AS_HEAL；除非人物描述明显偏防御、守护或治疗。进攻、舞台、收集、受伤反打、治疗、速度等特质应优先选择对应的不同模板。',
       '同一局里已经使用过的技能效果不能再次选择，必须避开这些 templateId。',
       '技能名称也要与同一局里已经使用的名称不同，结合人物特点创作，避免使用与示例或兜底模板相同的名称。',
-      'maxHp 是根据人物特色选择的整数，范围 5 到 10 之间；坦克、重装、防御、力量型人物偏高（8-10），敏捷、法师、刺客、脆皮型人物偏低（5-7），其余取 7 或 8。',
+      'maxHp 是根据人物特色选择的整数，范围 3 到 7 之间；坦克、重装、防御、力量型人物偏高（6-7），敏捷、法师、刺客、脆皮型人物偏低（3-4），其余取 5 或 6。',
       '只能选择输入中提供的技能 ID 和参数，主技能预算不超过 5，副技能预算不超过 3，主副技能不得重复。',
       'specialSkill 必须是特技库中的技能，与主技能、副技能互不重复；特技牌是一次性主动效果。',
       '头像搜索词应包含人物名称和表情包、趣味头像等用途词。',

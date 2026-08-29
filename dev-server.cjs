@@ -17,6 +17,8 @@ const contentTypes = {
   '.ico': 'image/x-icon'
 };
 const PUBLIC_EXTENSIONS = new Set(['.html', '.css', '.js', '.png', '.mp3', '.svg', '.ico']);
+// 房间持久化文件：保存到项目目录，重启后恢复对局；.json 不在可访问扩展名内，不会对外暴露。
+const ROOMS_FILE = process.env.WEB_AI_GAME_ROOMS_FILE || path.join(__dirname, 'rooms.json');
 
 let rooms = {};
 const roomClients = new Set();
@@ -48,6 +50,16 @@ function normalizeRooms(inputRooms) {
   return nextRooms;
 }
 
+// 玩家离线判定：超过 OFFLINE_MS 未上报心跳即视为离线；未知状态（刚加入）默认在线。
+// 90 秒较高阈值：浏览器把后台页面的定时器节流到约每分钟一次，阈值太短会把“切到后台”的玩家误判为离线。
+const OFFLINE_MS = 90000;
+function isPlayerOffline(room, playerId) {
+  const player = room?.players?.find((item) => item.id === playerId);
+  if (!player) return true;
+  if (typeof player.lastSeen !== 'number') return false;
+  return Date.now() - player.lastSeen > OFFLINE_MS;
+}
+
 // 对外广播/响应时隐藏房主填写的 API Key，服务器内存里保留完整配置用于 AI 生成。
 function sanitizeRoomsForClient(sourceRooms) {
   const nextRooms = clone(sourceRooms || {});
@@ -58,11 +70,59 @@ function sanitizeRoomsForClient(sourceRooms) {
       if (Object.keys(safeConfig).length) room.aiConfig = safeConfig;
       else delete room.aiConfig;
     }
+    if (Array.isArray(room.players)) {
+      room.players = room.players.map((player) => {
+        const { lastSeen, takenOver, ...rest } = player;
+        return { ...rest, online: !isPlayerOffline(room, player.id) };
+      });
+    }
   });
   return nextRooms;
 }
 
+// 从磁盘恢复房间，避免服务器重启导致进行中的对局丢失。
+try {
+  const saved = JSON.parse(fs.readFileSync(ROOMS_FILE, 'utf8'));
+  if (saved && typeof saved.rooms === 'object' && saved.rooms) rooms = normalizeRooms(saved.rooms);
+} catch {
+  // 首次运行或文件不存在/损坏：保持空房间。
+}
 rooms = normalizeRooms(rooms);
+
+// 持久化采用 800ms 去抖，把对局内高频变更合并写入，且保存时隐去房主填写的 API Key。
+let roomsPersistTimer = null;
+function sanitizeRoomsForStorage(sourceRooms) {
+  const nextRooms = clone(sourceRooms || {});
+  Object.values(nextRooms).forEach((room) => {
+    if (room?.aiConfig) {
+      const safeConfig = { ...room.aiConfig };
+      delete safeConfig.apiKey;
+      if (Object.keys(safeConfig).length) room.aiConfig = safeConfig;
+      else delete room.aiConfig;
+    }
+    if (Array.isArray(room.players)) {
+      room.players = room.players.map((player) => {
+        const { lastSeen, takenOver, online, ...rest } = player;
+        return rest;
+      });
+    }
+  });
+  return nextRooms;
+}
+function persistRoomsNow() {
+  try {
+    fs.writeFileSync(ROOMS_FILE, JSON.stringify({ rooms: sanitizeRoomsForStorage(rooms), updatedAt: Date.now() }));
+  } catch (error) {
+    console.error('Persist rooms failed:', error);
+  }
+}
+function schedulePersistRooms() {
+  if (roomsPersistTimer) return;
+  roomsPersistTimer = setTimeout(() => {
+    roomsPersistTimer = null;
+    persistRoomsNow();
+  }, 800);
+}
 
 function sendJson(response, status, payload) {
   response.writeHead(status, {
@@ -115,6 +175,7 @@ let broadcastTimer = null;
 let broadcastDirty = false;
 function scheduleBroadcast() {
   broadcastDirty = true;
+  schedulePersistRooms();
   if (broadcastTimer) return;
   broadcastTimer = setTimeout(() => {
     broadcastTimer = null;
@@ -205,6 +266,11 @@ function applyRoomChanges(changes, knownRevisions = {}, actorPlayerId = null) {
     const normalized = normalizeRoom(roomPatch, roomCode);
     if (!normalized) {
       conflicts.push({ roomCode, reason: 'invalid-room' });
+      return;
+    }
+    // 对局已开始的房间不允许再直接添加玩家（应由 takeover 接管空缺席位）。
+    if (currentRoom?.phase === 'PLAYING' && Array.isArray(normalized?.players) && normalized.players.length > (currentRoom.players?.length || 0)) {
+      conflicts.push({ roomCode, reason: 'game-action-not-authorized' });
       return;
     }
     preserveAiConfig(currentRoom, normalized);
@@ -424,6 +490,67 @@ async function handleApi(request, response, requestPath) {
     cleanupRooms();
     sendJson(response, 200, { rooms: sanitizeRoomsForClient(rooms), updatedAt: Date.now() });
     return true;
+  }
+
+  const heartbeatMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/heartbeat$/);
+  if (request.method === 'POST' && heartbeatMatch) {
+    const roomCode = heartbeatMatch[1];
+    const payload = await readJson(request);
+    const room = rooms[roomCode];
+    const player = room?.players?.find((item) => item.id === payload?.playerId);
+    if (!room || !player) {
+      sendJson(response, 404, { ok: false, message: '房间或玩家不存在。' });
+      return true;
+    }
+    player.lastSeen = Date.now();
+    scheduleBroadcast();
+    sendJson(response, 200, { ok: true });
+    return true;
+  }
+
+  const takeoverMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/takeover$/);
+  if (request.method === 'POST' && takeoverMatch) {
+    try {
+      const roomCode = takeoverMatch[1];
+      const payload = await readJson(request);
+      const room = rooms[roomCode];
+      if (!room) {
+        sendJson(response, 404, { ok: false, message: '房间不存在或已失效。' });
+        return true;
+      }
+      if (room.phase !== 'PLAYING') {
+        sendJson(response, 409, { ok: false, message: '该房间尚未开始对局，请直接加入。' });
+        return true;
+      }
+      const nickname = String(payload?.nickname || '').trim().slice(0, 12);
+      // 优先接管第一个离线席位：保持同一 playerId（英雄/手牌/位置不变），只更新昵称与在线状态。
+      const offline = room.players.find((player) => isPlayerOffline(room, player.id));
+      if (!offline) {
+        sendJson(response, 409, { ok: false, message: '该房间没有空缺席位可以接管。' });
+        return true;
+      }
+      offline.lastSeen = Date.now();
+      offline.takenOver = true;
+      if (nickname) offline.nickname = nickname;
+      // 同步对局引擎中的昵称，让客户端界面/日志展示接管人昵称。
+      const session = roomSessions.get(roomCode);
+      if (session) {
+        try {
+          session.eval(`(() => { const p = gameState.players.find((x) => x.id === ${JSON.stringify(offline.id)}); if (p) p.nickname = ${JSON.stringify(offline.nickname)}; })();`);
+        } catch (error) {
+          console.error(`Takeover nickname sync failed for ${roomCode}:`, error);
+        }
+        room.game = session.snapshot();
+        room.revision = (room.revision || 0) + 1;
+        room.updatedAt = Date.now();
+      }
+      scheduleBroadcast();
+      sendJson(response, 200, { ok: true, roomCode, playerId: offline.id, nickname: offline.nickname, room });
+      return true;
+    } catch {
+      sendJson(response, 400, { ok: false, message: '无法接管该席位，请稍后重试。' });
+      return true;
+    }
   }
 
   if (request.method === 'POST' && requestPath === '/api/ai/test') {
@@ -788,3 +915,12 @@ http.createServer(async (request, response) => {
   console.log(`AI hero generation: ${llmEnabled ? `server env fallback ${llmProvider} (${llmModel})` : 'no server key'} — 房主可在创建房间时选择 DeepSeek/通义千问并填写自己的 API Key，未配置时使用本地兜底生成。`);
   setInterval(serverGameLoop, 250);
 });
+
+// 优雅退出：把当前房间立刻落盘，避免 systemctl stop/重启时丢对局。
+function shutdownGracefully() {
+  if (roomsPersistTimer) { clearTimeout(roomsPersistTimer); roomsPersistTimer = null; }
+  try { persistRoomsNow(); } catch {}
+  process.exit(0);
+}
+process.on('SIGTERM', shutdownGracefully);
+process.on('SIGINT', shutdownGracefully);

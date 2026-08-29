@@ -229,6 +229,10 @@
       white-space: nowrap;
     }
 
+    .seat-status.offline {
+      color: #9aa2ad;
+    }
+
     .empty .seat-status,
     .empty .player-name {
       color: #737c8e;
@@ -523,9 +527,12 @@
     let roomSession;
 
     try {
-      roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey));
+      roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey) || localStorage.getItem(sessionStorageKey));
     } catch {
       roomSession = null;
+    }
+    if (roomSession?.roomCode && roomSession?.playerId && window.HeroKillNet) {
+      setInterval(() => window.HeroKillNet.heartbeat(roomSession.roomCode, roomSession.playerId), 10000);
     }
 
     function getRooms() {
@@ -591,7 +598,9 @@
           avatar.textContent = player.nickname.slice(0, 1);
           playerName.textContent = player.nickname;
           playerRole.textContent = `${seatNames[index]}号位${player.role === 'host' ? ' · 房主' : ''}${player.id === roomSession.playerId ? ' · 你' : ''}`;
-          status.textContent = player.ready ? '已准备' : '未准备';
+          const onlineText = player.online === undefined ? '' : (player.online ? '在线' : '离线');
+          status.textContent = `${player.ready ? '已准备' : '未准备'}${onlineText ? ` · ${onlineText}` : ''}`;
+          if (player.online === false) status.classList.add('offline');
         } else {
           avatar.textContent = seatNames[index];
           playerName.textContent = '等待玩家';
@@ -611,6 +620,7 @@
 
         if (!roomData || !currentPlayer) {
           sessionStorage.removeItem(sessionStorageKey);
+          localStorage.removeItem(sessionStorageKey);
           showToast('房间已解散或当前座位已失效。');
           setTimeout(() => window.location.replace('lobby.html'), 900);
           return;
@@ -719,6 +729,7 @@
         }
 
         sessionStorage.removeItem(sessionStorageKey);
+        localStorage.removeItem(sessionStorageKey);
         setTimeout(() => {
           window.location.href = 'lobby.html';
         }, 160);
