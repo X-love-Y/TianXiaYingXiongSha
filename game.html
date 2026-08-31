@@ -373,6 +373,10 @@
     .victory-kicker { color: var(--gold); font-size: 12px; letter-spacing: 2px; }
     .victory h1 { margin-top: 10px; color: var(--gold-light); font-family: SimSun, serif; font-size: 34px; }
     .victory p { margin: 12px 0 24px; color: var(--muted); font-size: 13px; }
+    .victory-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+    .victory-actions .danger { border-color: rgba(238,132,118,.62); background: rgba(109,38,34,.72); }
+    .victory-actions .danger:hover:not(:disabled) { background: rgba(138, 46, 40, .9); }
+    .victory-actions button:disabled { cursor: not-allowed; opacity: .4; }
 
     .footer { padding-top: 12px; color: #727d91; font-size: 11px; }
     .footer span:last-child { color: #a4acbb; }
@@ -415,7 +419,7 @@
           <div class="table-top"><span id="roundText">第 1 回合</span><strong id="phaseText">出牌阶段</strong></div>
           <div class="table-center">
             <div class="stacks">
-              <div class="stack"><div class="stack-card">牌<br>堆</div><span id="deckCount">114 张</span></div>
+              <div class="stack"><div class="stack-card">牌<br>堆</div><span id="deckCount">144 张</span></div>
               <div class="stack"><div class="discard-card empty" id="discardTop">空</div><span id="discardCount">弃牌 0</span></div>
             </div>
             <p class="center-status" id="centerStatus">等待对局开始</p>
@@ -437,7 +441,7 @@
       </section>
     </main>
 
-    <footer class="footer"><span>本地原型 · 技能配置已经服务端校验</span><span>基础牌 60 · 状态牌 20 · 装备 10 · 术卡 18 · 判定牌 6 · 特技牌 12</span></footer>
+    <footer class="footer"><span>本地原型 · 技能配置已经服务端校验</span><span>基础牌 80 · 状态牌 20 · 装备 10 · 术卡 18 · 判定牌 6 · 特技牌 12</span></footer>
   </div>
 
   <section class="response-panel" id="responsePanel" aria-live="assertive">
@@ -481,7 +485,13 @@
   </dialog>
 
   <section class="victory" id="victory" aria-modal="true" role="dialog">
-    <div class="victory-card"><div class="victory-kicker">MATCH COMPLETE</div><h1 id="victoryTitle">对局结束</h1><p id="victoryCopy"></p><button class="control-button primary" id="backLobby" type="button">返回大厅</button></div>
+    <div class="victory-card"><div class="victory-kicker">MATCH COMPLETE</div><h1 id="victoryTitle">对局结束</h1><p id="victoryCopy"></p>
+      <div class="victory-actions">
+        <button class="control-button primary" id="rematchButton" type="button">再来一局</button>
+        <button class="control-button" id="disbandButton" type="button">解散房间</button>
+        <button class="control-button" id="backLobby" type="button">返回大厅</button>
+      </div>
+    </div>
   </section>
   <audio id="buttonSound" src="按钮声音.mp3" preload="auto"></audio>
   <script src="network.js"></script>
@@ -498,7 +508,7 @@
     const SUITS = ['♠', '♥', '♣', '♦'];
     const POINT_LABELS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
     const SPELL_TYPES = ['ban', 'maosheng', 'death-god', 'love-god', 'steal', 'mutual-doom', 'special'];
-    const SPECIAL_NEEDS_TARGET = ['SPECIAL_DAMAGE_2', 'SPECIAL_STEAL_CARD', 'SPECIAL_SILENCE', 'SPECIAL_DISCARD_EQUIP', 'SPECIAL_DISCARD_TARGET'];
+    const SPECIAL_NEEDS_TARGET = ['SPECIAL_DAMAGE_2', 'SPECIAL_STEAL_CARD', 'SPECIAL_SILENCE', 'SPECIAL_DISCARD_EQUIP', 'SPECIAL_DISCARD_TARGET', 'SPECIAL_STEAL_EQUIP'];
     const SPECIAL_AOE = 'SPECIAL_AOE_1';
     // 服务器权威模式：客户端不再本地跑对局引擎，只负责渲染 + 发送动作 RPC，
     // 对局状态以服务器返回/广播的为准，彻底解决“谁出牌不统一 / 频繁刷新”。
@@ -533,7 +543,7 @@
       cardGuide: $('cardGuide'), cardGuideDialog: $('cardGuideDialog'), closeCardGuide: $('closeCardGuide'),
       responsePanel: $('responsePanel'), responseTitle: $('responseTitle'), responseCopy: $('responseCopy'),
       takeDamage: $('takeDamage'), respondDodge: $('respondDodge'), doomButton: $('doomButton'), victory: $('victory'), victoryTitle: $('victoryTitle'), table: document.querySelector('.table'),
-      victoryCopy: $('victoryCopy'), backLobby: $('backLobby'), sound: $('buttonSound'), turnDialog: $('turnDialog'),
+      victoryCopy: $('victoryCopy'), backLobby: $('backLobby'), rematchButton: $('rematchButton'), disbandButton: $('disbandButton'), sound: $('buttonSound'), turnDialog: $('turnDialog'),
       turnDialogCopy: $('turnDialogCopy'), cancelTurnEnd: $('cancelTurnEnd'), discardThenPass: $('discardThenPass'), directPass: $('directPass')
     };
 
@@ -675,8 +685,8 @@
         faceIndex += 1;
         deck.push({ ...card, suit, point, pointLabel: POINT_LABELS[point - 1] });
       };
-      for (let index = 0; index < 30; index += 1) pushCard({ uid: `kill-${index + 1}`, type: 'kill', name: '杀', effect: '对一名相邻玩家造成 1 点伤害，目标可打出闪抵消。' });
-      for (let index = 0; index < 20; index += 1) pushCard({ uid: `dodge-${index + 1}`, type: 'dodge', name: '闪', effect: '抵消一次针对你的杀。' });
+      for (let index = 0; index < 50; index += 1) pushCard({ uid: `kill-${index + 1}`, type: 'kill', name: '杀', effect: '对一名相邻玩家造成 1 点伤害，目标可打出闪抵消。' });
+      for (let index = 0; index < 30; index += 1) pushCard({ uid: `dodge-${index + 1}`, type: 'dodge', name: '闪', effect: '抵消一次针对你的杀。' });
       for (let index = 0; index < 10; index += 1) pushCard({ uid: `heal-${index + 1}`, type: 'heal', name: '奶', effect: '恢复 1 点生命（不超过上限），也可在濒死时自救。' });
       for (let index = 0; index < 5; index += 1) pushCard({ uid: `silence-${index + 1}`, type: 'silence', name: '沉默', effect: '目标下个出牌阶段不能主动使用手牌或主动技能。' });
       for (let index = 0; index < 5; index += 1) pushCard({ uid: `untargetable-${index + 1}`, type: 'untargetable', name: '无法选中', effect: '取消一张指向你的牌对你的目标。' });
@@ -732,9 +742,21 @@
       persistGame();
       render();
     }
+    function triggerLastStand(player) {
+      const skill = getSkill(player, 'LAST_STAND');
+      if (!skill) return;
+      player.skillUsage = player.skillUsage || {};
+      if (player.skillUsage.lastStandUsed) return;
+      if (player.hp <= 0 || player.hp >= player.maxHp) return;
+      player.skillUsage.lastStandUsed = true;
+      const amount = Math.min(2, player.maxHp - player.hp);
+      player.hp += amount;
+      addLog(`${player.nickname} 发动「${skill.name}」，本局首次生命告急，恢复 ${amount} 点生命。`);
+    }
     function loseHp(player, amount, sourceLabel, attacker = null) {
       player.hp = Math.max(0, player.hp - amount);
       addLog(`${player.nickname}${sourceLabel ? ` 因${sourceLabel}` : ''}失去 ${amount} 点生命，剩余 ${player.hp} 点生命。`);
+      triggerLastStand(player);
       if (player.hp <= 0) {
         if (player.hand.some((card) => card.type === 'heal')) beginDying(attacker, player, sourceLabel || 'lose-hp');
         else finishDefeat(attacker, player);
@@ -1218,6 +1240,10 @@
         ui.victoryCopy.textContent = gameState.endReason === 'TIME'
           ? `${isWinner ? '你进入了胜者名单。' : '你未进入胜者名单。'} ${matchWinners.map((player) => player.nickname).join('、') || '无人'} 按定时结算规则获胜。`
           : isWinner ? '你成为最后存活的玩家，赢得本局对局。' : currentPlayer.alive ? '本局没有产生唯一胜者。' : '你已出局，本局对局结束。';
+        // 房主掌控“再来一局 / 解散房间”，其他人只能返回大厅。
+        const meIsHost = Boolean((roomData?.players || []).find((player) => player.id === roomSession.playerId)?.role === 'host');
+        ui.rematchButton.style.display = meIsHost ? '' : 'none';
+        ui.disbandButton.style.display = meIsHost ? '' : 'none';
       }
       bindHand();
     }
@@ -1395,7 +1421,7 @@
       const target = gameState.players.find((player) => player.id === selectedTargetId && player.id !== actor.id && player.alive);
       const secondaryTarget = gameState.players.find((player) => player.id === selectedSecondaryTargetId && player.id !== actor.id && player.id !== target?.id && player.alive);
       if (!card || !target) return;
-      if (!hasEquipment(actor, '硬弓') && !areAdjacent(actor.id, target.id)) return;
+      if (!hasSkill(actor, 'SLASH_RANGE') && !hasEquipment(actor, '硬弓') && !areAdjacent(actor.id, target.id)) return;
       if (secondaryTarget && (!hasEquipment(actor, '爆炸弩') || !areAdjacent(target.id, secondaryTarget.id))) return;
       const targetIds = [target.id, secondaryTarget?.id].filter(Boolean);
       actor.hand = actor.hand.filter((item) => item.uid !== card.uid);
@@ -1819,6 +1845,39 @@
         else addLog(`${caster.nickname} 发动「${skillName}」，但 ${target.nickname} 没有手牌可弃。`);
         return;
       }
+      if (skillId === 'SPECIAL_DRAW_DISCARD') {
+        const drawn = drawCards(gameState, caster, 2);
+        addLog(`${caster.nickname} 发动「${skillName}」，立即摸 ${drawn} 张牌。`);
+        if (caster.hand.length) {
+          const discardIndex = Math.floor(Math.random() * caster.hand.length);
+          const discarded = caster.hand.splice(discardIndex, 1)[0];
+          gameState.discardPile.push(discarded);
+          addLog(`${caster.nickname} 随后随机弃置 1 张「${discarded.name}」。`);
+        }
+        return;
+      }
+      if (skillId === 'SPECIAL_STEAL_EQUIP') {
+        const equipped = randomEquipped(target);
+        if (!equipped) {
+          addLog(`${caster.nickname} 发动「${skillName}」，但 ${target.nickname} 没有装备。`);
+          return;
+        }
+        const replaced = caster.weapon;
+        target.weapon = null;
+        target.weaponUsage = {};
+        caster.weapon = { ...equipped.card };
+        caster.weaponUsage = {};
+        if (replaced) gameState.discardPile.push(replaced);
+        addLog(`${caster.nickname} 发动「${skillName}」，夺得 ${target.nickname} 的「${equipped.card.name}」并装备${replaced ? `，原「${replaced.name}」进入弃牌堆` : ''}。`);
+        return;
+      }
+      if (skillId === 'SPECIAL_HEAL_DRAW') {
+        const amount = Math.min(1, caster.maxHp - caster.hp);
+        caster.hp = Math.min(caster.maxHp, caster.hp + 1);
+        const drawn = drawCards(gameState, caster, 2);
+        addLog(`${caster.nickname} 发动「${skillName}」，恢复 ${amount} 点生命并摸 ${drawn} 张牌。`);
+        return;
+      }
       addLog(`${caster.nickname} 发动「${card.name}」，但效果尚未配置。`);
     }
     function applyLoveGod(caster, ids) {
@@ -2014,7 +2073,7 @@
           }
         }
         target.skillUsage = target.skillUsage || {};
-        if (damage > 0 && hasEquipment(target, '奇盾') && !hasEquipment(attacker, '轩辕剑') && weaponUsageFor(target).shieldRound !== gameState.round) {
+        if (damage > 0 && hasEquipment(target, '奇盾') && !hasEquipment(attacker, '轩辕剑') && !hasSkill(attacker, 'SLASH_IGNORE_SHIELD') && weaponUsageFor(target).shieldRound !== gameState.round) {
           weaponUsageFor(target).shieldRound = gameState.round;
           damage = Math.max(0, damage - 1);
           addLog(`${target.nickname} 的「奇盾」使本回合第一次受到的杀伤害 -1。`);
@@ -2036,6 +2095,7 @@
         target.hp = Math.max(0, target.hp - damage);
         attacker.damageDealt = (attacker.damageDealt || 0) + damage;
         if (damage > 0) addLog(`${target.nickname}${timedOut ? '响应超时，' : ''}受到 ${damage} 点伤害，剩余 ${target.hp} 点生命。`);
+        triggerLastStand(target);
         if (damage > 0 && hasEquipment(attacker, '吸血刀')) {
           const recover = Math.min(damage, attacker.maxHp - attacker.hp);
           attacker.hp += recover;
@@ -2050,10 +2110,32 @@
             addLog(`${attacker.nickname} 通过「妙手」随机获得 ${target.nickname} 一张手牌。`);
           }
         }
+        const slashSteal = getSkill(attacker, 'SLASH_STEAL');
+        if (damage > 0 && slashSteal && attacker.id !== target.id && attacker.skillUsage.slashStealRound !== gameState.round) {
+          attacker.skillUsage.slashStealRound = gameState.round;
+          if (target.hand.length) {
+            const stolen = target.hand.splice(Math.floor(Math.random() * target.hand.length), 1)[0];
+            attacker.hand.push(stolen);
+            addLog(`${attacker.nickname} 发动「${slashSteal.name}」，命中后偷得 ${target.nickname} 一张手牌。`);
+          } else {
+            addLog(`${attacker.nickname} 发动「${slashSteal.name}」，但 ${target.nickname} 没有手牌可偷。`);
+          }
+        }
         const damageDraw = getSkill(target, 'DAMAGE_DRAW');
         if (damage > 0 && damageDraw) {
           const drawn = drawCards(gameState, target, damageDraw.value);
           addLog(`${target.nickname} 发动「${damageDraw.name}」，受伤后摸 ${drawn} 张牌。`);
+        }
+        const revengeDiscard = getSkill(target, 'REVENGE_DISCARD');
+        if (damage > 0 && revengeDiscard && attacker.id !== target.id && target.skillUsage.revengeDiscardRound !== gameState.round) {
+          target.skillUsage.revengeDiscardRound = gameState.round;
+          if (attacker.hand.length) {
+            const dropped = attacker.hand.splice(Math.floor(Math.random() * attacker.hand.length), 1)[0];
+            gameState.discardPile.push(dropped);
+            addLog(`${target.nickname} 发动「${revengeDiscard.name}」，受伤后弃置 ${attacker.nickname} 一张手牌。`);
+          } else {
+            addLog(`${target.nickname} 发动「${revengeDiscard.name}」，但 ${attacker.nickname} 没有手牌可弃。`);
+          }
         }
         if (target.hp <= 0) {
           const hasHeal = target.hand.some((card) => card.type === 'heal');
@@ -2465,7 +2547,8 @@
       if (gameState.phase === 'DRAWING' && deadline && Date.now() >= deadline) {
         const drawingPlayer = gameState.players.find((player) => player.id === gameState.drawPlayerId);
         const mayFinishDraw = drawingPlayer?.id === roomSession.playerId || drawingPlayer?.isDemo
-          || (isHostClient && deadlinePassed && drawingPlayer && !drawingPlayer.isDemo);
+          || (isHostClient && deadlinePassed && drawingPlayer && !drawingPlayer.isDemo)
+          || (!SERVER_AUTH && deadlinePassed && drawingPlayer && !drawingPlayer.isDemo);
         if (mayFinishDraw) {
           if (gameState.skipPlayRound === gameState.round) {
             gameState.phase = 'DISCARD';
@@ -2489,13 +2572,17 @@
         const spellTarget = gameState.pendingSpell && gameState.players.find((player) => player.id === gameState.pendingSpell.currentTargetId);
         const rescueTarget = gameState.pendingRescue && gameState.players.find((player) => player.id === gameState.pendingRescue.targetId);
         const mayResolveResponse = responseTarget?.id === roomSession.playerId || responseTarget?.isDemo
-          || (isHostClient && deadlinePassed && responseTarget && !responseTarget.isDemo);
+          || (isHostClient && deadlinePassed && responseTarget && !responseTarget.isDemo)
+          || (!SERVER_AUTH && deadlinePassed && responseTarget && !responseTarget.isDemo);
         const mayResolveSpell = spellTarget?.id === roomSession.playerId || spellTarget?.isDemo
-          || (isHostClient && deadlinePassed && spellTarget && !spellTarget.isDemo);
+          || (isHostClient && deadlinePassed && spellTarget && !spellTarget.isDemo)
+          || (!SERVER_AUTH && deadlinePassed && spellTarget && !spellTarget.isDemo);
         const mayResolveRescue = rescueTarget?.id === roomSession.playerId || rescueTarget?.isDemo
-          || (isHostClient && deadlinePassed && rescueTarget && !rescueTarget.isDemo);
+          || (isHostClient && deadlinePassed && rescueTarget && !rescueTarget.isDemo)
+          || (!SERVER_AUTH && deadlinePassed && rescueTarget && !rescueTarget.isDemo);
         const mayResolveTurn = current()?.id === roomSession.playerId || current()?.isDemo
-          || (isHostClient && deadlinePassed && current() && !current().isDemo);
+          || (isHostClient && deadlinePassed && current() && !current().isDemo)
+          || (!SERVER_AUTH && deadlinePassed && current() && !current().isDemo);
         if (gameState.phase === 'RESPONSE' && mayResolveResponse) resolveAttack(false, true);
         else if (gameState.phase === 'RESPONSE' && mayResolveSpell && gameState.pendingSpell) {
           const pending = gameState.pendingSpell;
@@ -2560,8 +2647,44 @@
     ui.cardGuideDialog.addEventListener('click', (event) => { if (event.target === ui.cardGuideDialog) ui.cardGuideDialog.close(); });
     ui.backLobby.addEventListener('click', () => { sessionStorage.removeItem(sessionStorageKey); localStorage.removeItem(sessionStorageKey); window.location.href = 'lobby.html'; });
 
+    // 结束阶段：再来一局 / 解散房间。仅房主按钮可用（下方根据角色控制禁用），
+    // 调用服务器房间生命周期 API，非房主只看到返回大厅。
+    async function callRoomCommand(type) {
+      if (!roomSession?.roomCode || !roomSession.playerId) return;
+      const button = type === 'rematch' ? ui.rematchButton : ui.disbandButton;
+      if (button) button.disabled = true;
+      try {
+        const response = await fetch(`/api/rooms/${roomSession.roomCode}/${type}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerId: roomSession.playerId })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || `操作失败：${response.status}`);
+        if (type === 'disband') {
+          sessionStorage.removeItem(sessionStorageKey);
+          localStorage.removeItem(sessionStorageKey);
+          window.location.href = 'lobby.html';
+          return;
+        }
+        // 再来一局：服务端已复位房间到 CUSTOMIZING，跳回卡牌定制页。
+        window.location.href = 'customize.html';
+      } catch (error) {
+        if (ui.notice) ui.notice.textContent = error.message || '操作失败，请重试。';
+        if (button) button.disabled = false;
+      }
+    }
+    ui.rematchButton.addEventListener('click', () => { playSound(); callRoomCommand('rematch'); });
+    ui.disbandButton.addEventListener('click', () => { playSound(); callRoomCommand('disband'); });
+
     function handleRemoteGameUpdate() {
       const latestRoom = getRooms()[roomSession.roomCode];
+      // 房主“再来一局”后服务端复位房间到 CUSTOMIZING 并删除 game：
+      // 其余玩家看到该状态时也应跟回卡牌定制页，而不是停在结束面板。
+      if (latestRoom?.phase === 'CUSTOMIZING' && !latestRoom.game) {
+        window.location.href = 'customize.html';
+        return;
+      }
       if (!latestRoom?.game) {
         if (!gameState) tryStartGame();
         return;

@@ -1,7 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { generateHero, planFallbackSkills, testModelConnection } = require('./hero-generator.cjs');
+const { generateHero, planFallbackSkills, reviewRoomBalance, testModelConnection } = require('./hero-generator.cjs');
 const { createSession } = require('./server-game.cjs');
 
 const root = process.cwd();
@@ -53,11 +53,34 @@ function normalizeRooms(inputRooms) {
 // 玩家离线判定：超过 OFFLINE_MS 未上报心跳即视为离线；未知状态（刚加入）默认在线。
 // 90 秒较高阈值：浏览器把后台页面的定时器节流到约每分钟一次，阈值太短会把“切到后台”的玩家误判为离线。
 const OFFLINE_MS = 90000;
+// 房主断线保留时间：超过该时长仍未恢复，房主身份转移给最早加入且在线的玩家（策划 §2.5）。
+const HOST_TRANSFER_MS = 60 * 1000;
 function isPlayerOffline(room, playerId) {
   const player = room?.players?.find((item) => item.id === playerId);
   if (!player) return true;
   if (typeof player.lastSeen !== 'number') return false;
   return Date.now() - player.lastSeen > OFFLINE_MS;
+}
+
+// 房主断线超时转移：当前房主离线超过 HOST_TRANSFER_MS 时，
+// 将房主身份交给“最早加入且在线的玩家”（按 players 数组顺序，越早加入越靠前）。
+function maybeTransferHost(room) {
+  if (!room || !Array.isArray(room.players) || room.players.length < 2) return false;
+  if (room.phase === 'ENDED' || room.phase === 'DISBANDED') return false;
+  const host = room.players.find((player) => player.role === 'host');
+  if (!host) return false;
+  // 房主单独使用 60 秒保留窗口（策划 §2.5）；普通在线检测仍为 OFFLINE_MS（90 秒）。
+  const hostLastSeen = host.lastSeen || room.createdAt || 0;
+  const hostGoneMs = Date.now() - hostLastSeen;
+  if (hostGoneMs <= HOST_TRANSFER_MS) return false;
+  // 候选：最早加入（数组靠前）、在线、且不是当前房主。
+  const candidate = room.players.find((player) => player.id !== host.id && !isPlayerOffline(room, player.id));
+  if (!candidate) return false;
+  host.role = 'guest';
+  candidate.role = 'host';
+  touchRoom(room);
+  scheduleBroadcast();
+  return true;
 }
 
 // 对外广播/响应时隐藏房主填写的 API Key，服务器内存里保留完整配置用于 AI 生成。
@@ -446,6 +469,16 @@ async function generateRoomHeroes(roomCode) {
 
     const currentRoom = rooms[roomCode];
     if (!currentRoom) return;
+    // 全局平衡与重复度复核（策划 §4.6）：生成完整 20 张后做一次过度集中检测 + 单卡强度检查，
+    // 只调整“同角色同一技能超限”的卡，绝不阻塞对局；复核结果写入 heroGeneration 便于审计。
+    let reviewReport = null;
+    try {
+      const review = reviewRoomBalance(generatedByPlayer, { maxRoleDupes: 2 });
+      generatedByPlayer = review.heroes;
+      reviewReport = review.report;
+    } catch (reviewError) {
+      console.error(`Room ${roomCode} balance review skipped:`, reviewError);
+    }
     currentRoom.generatedHeroes = generatedByPlayer;
     // 收集各玩家 5 张卡生成来源
     const sources = [];
@@ -457,7 +490,8 @@ async function generateRoomHeroes(roomCode) {
       status: 'READY',
       completedCount: allCards.length,
       completedAt: Date.now(),
-      source: sources[0] || 'fallback'
+      source: sources[0] || 'fallback',
+      balance: reviewReport
     };
     delete currentRoom.dealtHands;
     delete currentRoom.confirmations;
@@ -807,6 +841,86 @@ async function handleApi(request, response, requestPath) {
     return true;
   }
 
+  // 再来一局：仅房主可发起，且要求本局已结束（room.phase=ENDED）。
+  // 复位对局相关字段并回到 CUSTOMIZING，保留 4 名玩家的座位与昵称。
+  const rematchMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/rematch$/);
+  if (request.method === 'POST' && rematchMatch) {
+    try {
+      const roomCode = rematchMatch[1];
+      const payload = await readJson(request);
+      const room = rooms[roomCode];
+      if (!room) {
+        sendJson(response, 404, { ok: false, message: '房间不存在或已失效。' });
+        return true;
+      }
+      const actor = room.players?.find((player) => player.id === payload.playerId);
+      if (!actor) {
+        sendJson(response, 403, { ok: false, message: '玩家不属于该房间。' });
+        return true;
+      }
+      if (actor.role !== 'host') {
+        sendJson(response, 409, { ok: false, message: '只有房主可以发起再来一局。' });
+        return true;
+      }
+      if (room.phase !== 'ENDED') {
+        sendJson(response, 409, { ok: false, message: '本局尚未结束，暂不能再来一局。' });
+        return true;
+      }
+      // 丢弃权威对局引擎，复位所有对局产物，回到卡牌定制阶段。
+      roomSessions.delete(roomCode);
+      delete room.game;
+      delete room.generatedHeroes;
+      delete room.confirmations;
+      delete room.dealtHands;
+      delete room.picks;
+      delete room.specialCards;
+      delete room.finalHeroes;
+      delete room.heroGeneration;
+      delete room.endedAt;
+      room.heroGeneration = { status: 'WAITING' };
+      room.phase = 'CUSTOMIZING';
+      room.players.forEach((player) => {
+        player.ready = player.role === 'host';
+      });
+      touchRoom(room);
+      scheduleBroadcast();
+      sendJson(response, 200, { ok: true, room });
+    } catch {
+      sendJson(response, 400, { ok: false, message: '无法读取再来一局数据。' });
+    }
+    return true;
+  }
+
+  // 解散房间：仅房主可发起，任意阶段（等待/试用/对局/结束）都可解散。
+  const disbandMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/disband$/);
+  if (request.method === 'POST' && disbandMatch) {
+    try {
+      const roomCode = disbandMatch[1];
+      const payload = await readJson(request);
+      const room = rooms[roomCode];
+      if (!room) {
+        sendJson(response, 404, { ok: false, message: '房间不存在或已失效。' });
+        return true;
+      }
+      const actor = room.players?.find((player) => player.id === payload.playerId);
+      if (!actor) {
+        sendJson(response, 403, { ok: false, message: '玩家不属于该房间。' });
+        return true;
+      }
+      if (actor.role !== 'host') {
+        sendJson(response, 409, { ok: false, message: '只有房主可以解散房间。' });
+        return true;
+      }
+      roomSessions.delete(roomCode);
+      delete rooms[roomCode];
+      scheduleBroadcast();
+      sendJson(response, 200, { ok: true, roomCode });
+    } catch {
+      sendJson(response, 400, { ok: false, message: '无法读取解散房间数据。' });
+    }
+    return true;
+  }
+
   if (request.method === 'GET' && requestPath === '/api/rooms/events') {
     cleanupRooms();
     response.writeHead(200, {
@@ -866,6 +980,17 @@ function serverGameLoop() {
       session.pumpTimers(Date.now());
       session.tick();
       const snapshot = session.snapshot();
+      // 对局在服务端引擎里已经结算（ENDED）：把房间状态也切到 ENDED，
+      // 停止继续推进，并让客户端结局面板出现“再来一局 / 解散房间”。
+      if (snapshot?.status === 'ENDED') {
+        room.phase = 'ENDED';
+        room.game = snapshot;
+        room.endedAt = room.endedAt || Date.now();
+        room.revision = (room.revision || 0) + 1;
+        room.updatedAt = Date.now();
+        scheduleBroadcast();
+        return;
+      }
       const fingerprint = gameFingerprint(snapshot);
       if (session.lastFingerprint === fingerprint) return;
       session.lastFingerprint = fingerprint;
@@ -892,6 +1017,14 @@ function serverGameLoop() {
       scheduleBroadcast();
     } catch (error) {
       console.error(`Room ${roomCode} authoritative session backfill failed:`, error);
+    }
+  });
+  // 房主断线超时转移：对所有非结束房间做一次检测（低频，几乎无开销）。
+  Object.keys(rooms).forEach((roomCode) => {
+    const room = rooms[roomCode];
+    if (!room || room.phase === 'ENDED' || room.phase === 'DISBANDED') return;
+    if (maybeTransferHost(room)) {
+      // 已通过 touchRoom/scheduleBroadcast 同步。
     }
   });
 }

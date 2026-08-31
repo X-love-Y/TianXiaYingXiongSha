@@ -70,6 +70,36 @@ const SKILL_CATALOG = Object.freeze({
     values: [1],
     powerByValue: Object.freeze({ 1: 3 }),
     describe: () => '每回合第一次使用奶后，摸 1 张牌'
+  }),
+  SLASH_RANGE: Object.freeze({
+    trigger: 'PLAY_PHASE',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '使用杀时可以指定任意一名存活玩家（无视距离）'
+  }),
+  SLASH_IGNORE_SHIELD: Object.freeze({
+    trigger: 'BEFORE_DAMAGE',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 4 }),
+    describe: () => '你的杀无视目标装备提供的免伤效果'
+  }),
+  SLASH_STEAL: Object.freeze({
+    trigger: 'AFTER_DAMAGE',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 4 }),
+    describe: () => '每回合第一次使用杀命中后，随机获得目标一张手牌'
+  }),
+  REVENGE_DISCARD: Object.freeze({
+    trigger: 'AFTER_DAMAGE',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 4 }),
+    describe: () => '每回合第一次受到伤害后，随机弃置伤害来源一张手牌'
+  }),
+  LAST_STAND: Object.freeze({
+    trigger: 'HP_THRESHOLD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 5 }),
+    describe: () => '本局首次生命值低于上限时，恢复 2 点生命'
   })
 });
 
@@ -135,6 +165,24 @@ const SPECIAL_CATALOG = Object.freeze({
     values: [1],
     powerByValue: Object.freeze({ 1: 3 }),
     describe: () => '随机弃置一名其他玩家的最多 2 张手牌'
+  }),
+  SPECIAL_DRAW_DISCARD: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 3 }),
+    describe: () => '立即摸 2 张牌，然后随机弃置 1 张手牌'
+  }),
+  SPECIAL_STEAL_EQUIP: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 4 }),
+    describe: () => '获得并装备一名其他玩家的一件装备'
+  }),
+  SPECIAL_HEAL_DRAW: Object.freeze({
+    trigger: 'SPECIAL_CARD',
+    values: [1],
+    powerByValue: Object.freeze({ 1: 4 }),
+    describe: () => '恢复 1 点生命并立即摸 2 张牌'
   })
 });
 
@@ -262,7 +310,12 @@ const FALLBACK_SKILL_NAMES = Object.freeze({
   DRAW_ON_KILL: '击杀补给',
   HEAL_ON_KILL: '战意高昂',
   DODGE_DRAW: '身法如电',
-  MERCIFUL_DRAW: '妙手仁心'
+  MERCIFUL_DRAW: '妙手仁心',
+  SLASH_RANGE: '远程精准',
+  SLASH_IGNORE_SHIELD: '破甲一击',
+  SLASH_STEAL: '顺手一刀',
+  REVENGE_DISCARD: '以牙还牙',
+  LAST_STAND: '背水一战'
 });
 
 const FALLBACK_SPECIAL_NAMES = Object.freeze({
@@ -275,7 +328,10 @@ const FALLBACK_SPECIAL_NAMES = Object.freeze({
   SPECIAL_DISCARD_EQUIP: '卸甲令',
   SPECIAL_SHIELD_2: '金钟罩',
   SPECIAL_DRAW_2: '妙手生花',
-  SPECIAL_DISCARD_TARGET: '釜底抽薪'
+  SPECIAL_DISCARD_TARGET: '釜底抽薪',
+  SPECIAL_DRAW_DISCARD: '取舍之道',
+  SPECIAL_STEAL_EQUIP: '夺宝奇兵',
+  SPECIAL_HEAL_DRAW: '起死回生'
 });
 
 const FALLBACK_SKILL_VALUES = Object.freeze({
@@ -290,7 +346,12 @@ const FALLBACK_SKILL_VALUES = Object.freeze({
   DRAW_ON_KILL: 1,
   HEAL_ON_KILL: 1,
   DODGE_DRAW: 1,
-  MERCIFUL_DRAW: 1
+  MERCIFUL_DRAW: 1,
+  SLASH_RANGE: 1,
+  SLASH_IGNORE_SHIELD: 1,
+  SLASH_STEAL: 1,
+  REVENGE_DISCARD: 1,
+  LAST_STAND: 1
 });
 
 const FALLBACK_SPECIAL_VALUES = Object.freeze({
@@ -303,7 +364,10 @@ const FALLBACK_SPECIAL_VALUES = Object.freeze({
   SPECIAL_DISCARD_EQUIP: 1,
   SPECIAL_SHIELD_2: 1,
   SPECIAL_DRAW_2: 1,
-  SPECIAL_DISCARD_TARGET: 1
+  SPECIAL_DISCARD_TARGET: 1,
+  SPECIAL_DRAW_DISCARD: 1,
+  SPECIAL_STEAL_EQUIP: 1,
+  SPECIAL_HEAL_DRAW: 1
 });
 
 // 关键词 → 技能效果 的贴合度打分，值越高越符合人物描述。
@@ -320,7 +384,12 @@ const KEYWORD_SKILL_SCORES = Object.freeze([
   { words: ['击杀', '斩将', '终结', '收割', '击败'], skill: 'DRAW_ON_KILL', score: 2 },
   { words: ['战意', '凯旋', '余勇', '越战'], skill: 'HEAL_ON_KILL', score: 2 },
   { words: ['身法', '闪避', '灵巧', '伺机', '走位'], skill: 'DODGE_DRAW', score: 2 },
-  { words: ['仁心', '医者', '悬壶', '妙手', '救人'], skill: 'MERCIFUL_DRAW', score: 2 }
+  { words: ['仁心', '医者', '悬壶', '妙手', '救人'], skill: 'MERCIFUL_DRAW', score: 2 },
+  { words: ['远程', '射程', '射箭', '狙击', '百步', '瞄准', '远距离', '长弓'], skill: 'SLASH_RANGE', score: 3 },
+  { words: ['护甲', '破甲', '穿透', '无视', '铠甲', '重甲', '穿盾', '破防'], skill: 'SLASH_IGNORE_SHIELD', score: 3 },
+  { words: ['顺手', '偷', '窃', '掠夺', '巧取', '手快', '小偷', '神偷'], skill: 'SLASH_STEAL', score: 3 },
+  { words: ['反击', '反制', '以牙', '报复', '来而不往', '记仇'], skill: 'REVENGE_DISCARD', score: 3 },
+  { words: ['绝境', '死地', '拼命', '背水', '逆境', '孤注', '最后一搏'], skill: 'LAST_STAND', score: 3 }
 ]);
 
 // 提取描述中用于技能命名的人物关键词，按优先级取第一个命中的词。
@@ -329,7 +398,8 @@ const NAME_KEYWORD_ORDER = Object.freeze([
   '仓鼠', '收藏', '收集', '宝藏', '背包', '防御', '盾', '守护', '铁壁', '爆发', '重击', '力量',
   '雷霆', '闪电', '连击', '连续', '速度', '敏捷', '闪避', '身法', '谋略', '智慧', '受伤', '坚韧',
   '健身', '强壮', '体力', '耐力', '巨人', '温柔', '可爱', '搞笑', '火锅', '游戏', '编程', '代码', '摄影',
-  '收割', '凯旋', '仁医', '妙手', '悬壶', '医者', '击杀', '斩将'
+  '收割', '凯旋', '仁医', '妙手', '悬壶', '医者', '击杀', '斩将',
+  '远程', '狙击', '破甲', '穿透', '掠夺', '巧取', '反击', '以牙', '绝境', '拼死'
 ]);
 
 // 每个技能效果的趣味命名池，{kw} 会被人物关键词替换；主技能优先使用带 {kw} 的名称。
@@ -345,7 +415,12 @@ const SKILL_NAME_POOLS = Object.freeze({
   DRAW_ON_KILL: ['{kw}收割', '{kw}补给', '{kw}缴获', '击杀补给', '战利品', '一鼓作气', '{kw}收获'],
   HEAL_ON_KILL: ['{kw}威震', '{kw}凯旋', '{kw}余勇', '战意高昂', '凯旋而归', '王者归来', '{kw}斗志'],
   DODGE_DRAW: ['{kw}闪身', '{kw}灵动', '{kw}伺机', '身法如电', '见招拆招', '后发先至', '{kw}身法'],
-  MERCIFUL_DRAW: ['{kw}仁医', '{kw}妙手', '{kw}悬壶', '妙手仁心', '医者仁心', '悬壶济世', '{kw}仁心']
+  MERCIFUL_DRAW: ['{kw}仁医', '{kw}妙手', '{kw}悬壶', '妙手仁心', '医者仁心', '悬壶济世', '{kw}仁心'],
+  SLASH_RANGE: ['{kw}远程', '{kw}百步', '{kw}狙杀', '远程精准', '百步穿杨', '隔空点射', '{kw}之目'],
+  SLASH_IGNORE_SHIELD: ['{kw}破甲', '{kw}穿盾', '{kw}破防', '破甲一击', '无坚不摧', '贯穿重甲', '{kw}利刃'],
+  SLASH_STEAL: ['{kw}顺手', '{kw}偷刀', '{kw}掠夺', '顺手一刀', '兵不厌诈', '贼不走空', '{kw}巧手'],
+  REVENGE_DISCARD: ['{kw}反戈', '{kw}报应', '{kw}回敬', '以牙还牙', '来而不往', '以暴制暴', '{kw}之怒'],
+  LAST_STAND: ['{kw}拼死', '{kw}绝境', '{kw}逆光', '背水一战', '绝地求生', '置之死地', '{kw}执念']
 });
 
 const SPECIAL_NAME_POOLS = Object.freeze({
@@ -358,7 +433,10 @@ const SPECIAL_NAME_POOLS = Object.freeze({
   SPECIAL_DISCARD_EQUIP: ['{kw}卸甲', '{kw}破防', '{kw}瓦解', '卸甲令', '釜底抽薪', '兵不厌诈', '{kw}之击'],
   SPECIAL_SHIELD_2: ['{kw}金钟', '{kw}铁壁', '{kw}守护', '金钟罩', '铜墙铁壁', '不动如山', '{kw}之盾'],
   SPECIAL_DRAW_2: ['{kw}妙计', '{kw}灵感', '{kw}神来', '妙手生花', '神机妙算', '天马行空', '{kw}之智'],
-  SPECIAL_DISCARD_TARGET: ['{kw}巧取', '{kw}长驱', '{kw}席卷', '釜底抽薪', '声东击西', '趁火打劫', '{kw}之击']
+  SPECIAL_DISCARD_TARGET: ['{kw}巧取', '{kw}长驱', '{kw}席卷', '釜底抽薪', '声东击西', '趁火打劫', '{kw}之击'],
+  SPECIAL_DRAW_DISCARD: ['{kw}取舍', '{kw}权衡', '{kw}取舍', '取舍之道', '有舍有得', '进退有度', '{kw}之算'],
+  SPECIAL_STEAL_EQUIP: ['{kw}夺宝', '{kw}缴械', '{kw}夺甲', '夺宝奇兵', '探囊取物', '鸠占鹊巢', '{kw}之夺'],
+  SPECIAL_HEAL_DRAW: ['{kw}回生', '{kw}续命', '{kw}提振', '起死回生', '枯木逢春', '绝处逢生', '{kw}回春']
 });
 
 function normalizeUsedNames(options = {}) {
@@ -392,7 +470,10 @@ function specialScoreFor(description, templateId) {
     { words: ['装备', '武器', '铠甲', '卸', '缴械', '夺'], skill: 'SPECIAL_DISCARD_EQUIP', score: 3 },
     { words: ['防御', '盾', '守护', '铁壁', '挨打', '抗压', '不屈'], skill: 'SPECIAL_SHIELD_2', score: 3 },
     { words: ['谋略', '聪明', '运筹', '计划', '智慧', '研究', '知识', '手牌', '抽牌'], skill: 'SPECIAL_DRAW_2', score: 3 },
-    { words: ['弃牌', '手牌', '瓦解', '剥夺', '没收', '缴械', '洗牌'], skill: 'SPECIAL_DISCARD_TARGET', score: 2 }
+    { words: ['弃牌', '手牌', '瓦解', '剥夺', '没收', '缴械', '洗牌'], skill: 'SPECIAL_DISCARD_TARGET', score: 2 },
+    { words: ['取舍', '权衡', '弃牌', '交换', '权衡', '赌博', '豪赌'], skill: 'SPECIAL_DRAW_DISCARD', score: 3 },
+    { words: ['夺', '缴械', '装备', '武器', '铠甲', '卸甲', '抢夺'], skill: 'SPECIAL_STEAL_EQUIP', score: 3 },
+    { words: ['治疗', '回复', '续航', '回血', '补充', '双效'], skill: 'SPECIAL_HEAL_DRAW', score: 2 }
   ];
   for (const rule of rules) {
     if (rule.skill !== templateId) continue;
@@ -998,6 +1079,118 @@ async function generateHero(input, options = {}) {
   return validateHeroProposal(buildFallbackProposal(normalizedInput, options), normalizedInput, 'fallback', options);
 }
 
+// 全局平衡与重复度复核（策划 §4.6 / §4.4）：
+// 生成完 20 张英雄后，检查“同一位/同角色”是否出现过度集中（同一 templateId 在同角色出现 T 次及以上），
+// 并校验单张卡的强度总分（主+副+特）是否落在合理区间。对过度集中的卡做一次“保预算、贴合描述、且不与
+// 同卡/其他卡重复”的技能换新。若换不出则保留原卡（宁可重复也不阻塞对局）。
+function reviewRoomBalance(generatedByPlayer, options = {}) {
+  const maxRoleDupes = Number(options.maxRoleDupes || 2);
+  const allHeroes = [];
+  const indexOf = new Map();
+  Object.entries(generatedByPlayer || {}).forEach(([authorId, heroes]) => {
+    (heroes || []).forEach((hero, atIndex) => {
+      indexOf.set(hero, { authorId, atIndex });
+      allHeroes.push(hero);
+    });
+  });
+
+  const catalogForRole = (role) => role === 'specialSkill' ? SPECIAL_CATALOG : SKILL_CATALOG;
+  const budgetForRole = (role) => role === 'specialSkill' ? SPECIAL_BUDGET : (role === 'secondarySkill' ? SECONDARY_BUDGET : PRIMARY_BUDGET);
+
+  const usedSkillNames = new Set();
+  const roleUsage = { primarySkill: {}, secondarySkill: {}, specialSkill: {} };
+  allHeroes.forEach((hero) => {
+    ['primarySkill', 'secondarySkill', 'specialSkill'].forEach((role) => {
+      const id = hero[role]?.templateId;
+      if (id) roleUsage[role][id] = (roleUsage[role][id] || 0) + 1;
+      const name = hero[role]?.name;
+      if (name) usedSkillNames.add(name);
+    });
+  });
+
+  const report = {
+    duplicates: [],
+    repaired: 0,
+    overflow: []
+  };
+
+  // 强度/预算溢出检测（单卡主+副+特不应长期远超预算，提示但不强制回退）。
+  allHeroes.forEach((hero) => {
+    const sum = (hero.primarySkill?.power || 0) + (hero.secondarySkill?.power || 0) + (hero.specialSkill?.power || 0);
+    if (sum > NUMBER_MAX_BALANCE) {
+      report.overflow.push({ heroName: hero.heroName, primary: hero.primarySkill?.templateId, secondary: hero.secondarySkill?.templateId, special: hero.specialSkill?.templateId, sum });
+    }
+  });
+
+  // 过度集中检测 + 一次换新。
+  ['primarySkill', 'secondarySkill', 'specialSkill'].forEach((role) => {
+    Object.entries(roleUsage[role]).forEach(([id, count]) => {
+      if (count <= maxRoleDupes) return;
+      report.duplicates.push({ role, templateId: id, count });
+      const budget = budgetForRole(role);
+      const catalog = catalogForRole(role);
+      const isSpecial = role === 'specialSkill';
+      // 对超限角色里除第一个外的卡尝试换新，尽量让同角色不再超 maxRoleDupes。
+      let toFix = count - maxRoleDupes;
+      const candidates = allHeroes.filter((hero) => hero[role]?.templateId === id);
+      for (let i = 1; i < candidates.length && toFix > 0; i += 1) {
+        const hero = candidates[i];
+        const { authorId, atIndex } = indexOf.get(hero);
+        const sameCardIds = new Set([
+          hero.primarySkill?.templateId,
+          hero.secondarySkill?.templateId,
+          hero.specialSkill?.templateId
+        ]);
+        const pick = pickReplacementSkill(hero, role, budget, catalog, sameCardIds, usedSkillNames, maxRoleDupes, roleUsage, isSpecial);
+        if (!pick) continue;
+        const oldName = hero[role].name;
+        if (oldName) usedSkillNames.delete(oldName);
+        hero[role] = pick;
+        usedSkillNames.add(pick.name);
+        // 更新全局计数（放回旧的、移除新的——换新后同角色计数自然回落）。
+        roleUsage[role][id] -= 1;
+        roleUsage[role][pick.templateId] = (roleUsage[role][pick.templateId] || 0) + 1;
+        // 同步回 generatedByPlayer，保持引用一致。
+        generatedByPlayer[authorId][atIndex] = hero;
+        report.repaired += 1;
+        toFix -= 1;
+      }
+    });
+  });
+
+  return { heroes: generatedByPlayer, report };
+}
+
+// 为过度集中的卡挑选一个替换技能：合法预算、不与同卡主/副/特重复、不与已用名重复、
+// 且尽量不把同角色别的技能也推过 maxRoleDupes；再按描述贴合度从高到低。
+function pickReplacementSkill(hero, role, budget, catalog, sameCardIds, usedSkillNames, maxRoleDupes, roleUsage, isSpecial) {
+  const blocked = new Set(sameCardIds);
+  const candidates = Object.keys(catalog).filter((id) => !blocked.has(id) && canUseSkillWithinBudget(id, budget));
+  candidates.sort((a, b) => (roleUsage[role][a] || 0) - (roleUsage[role][b] || 0));
+  const description = `${hero.heroName || ''} ${hero.description || ''}`;
+  const scoreFor = isSpecial ? (d, id) => specialScoreFor(d, id) : (d, id) => skillScoreFor(d, id);
+  candidates.sort((a, b) => (roleUsage[role][a] || 0) - (roleUsage[role][b] || 0) || scoreFor(description, b) - scoreFor(description, a));
+  for (const id of candidates) {
+    if ((roleUsage[role][id] || 0) >= maxRoleDupes) continue;
+    const value = fallbackValueFor(id, budget);
+    if (value === undefined || value === null) continue;
+    const template = catalog[id];
+    const baseName = composeSkillName(id, hero.heroName, description, usedSkillNames, isSpecial);
+    if (!baseName) continue;
+    return {
+      templateId: id,
+      name: baseName,
+      value,
+      trigger: template.trigger,
+      description: template.describe(value),
+      power: template.powerByValue[value]
+    };
+  }
+  return null;
+}
+
+const NUMBER_MAX_BALANCE = 13; // 主 5 + 副 4 + 特 5 ≈ 上限，超出即视为强度溢出提示。
+
 module.exports = {
   SKILL_CATALOG,
   SPECIAL_CATALOG,
@@ -1007,5 +1200,6 @@ module.exports = {
   buildFallbackProposal,
   planFallbackSkills,
   rankSkillsByDescription,
+  reviewRoomBalance,
   testModelConnection
 };

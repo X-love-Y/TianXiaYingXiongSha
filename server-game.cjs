@@ -126,10 +126,13 @@ class GameSession {
     this.lastSnapshot = null;
     // 服务器权威：脚本内的 loadOrCreateGame 已不再本地建局（SERVER_AUTH=true），
     // 因此这里由服务端显式调用 createGame 建立唯一对局状态。
+    // 必须先让 roomData 指向当前房间：makePlayer / refreshPlayerHeroes 用 getGeneratedHero(roomData, ...)
+    // 把 finalHeroes 里的主/副/特技挂到玩家的 hero 上；否则服务器权威模式下技能不会生效。
+    this.eval(`roomData = ${JSON.stringify(room)}; localStorage.setItem(${q('heroKillLocalRooms')}, JSON.stringify({ [${q(room.roomCode)}]: ${JSON.stringify(room)} }));`);
     if (!this.eval('gameState && gameState.status === "PLAYING"')) {
       this.eval(`gameState = createGame(${JSON.stringify(room)});`);
     }
-    this.eval('if (roomData) roomData.game = gameState;');
+    this.eval('if (roomData) { roomData.game = gameState; localStorage.setItem("heroKillLocalRooms", JSON.stringify({ [roomData.roomCode]: roomData })); }');
     this.initialized = Boolean(this.eval('gameState && gameState.status === "PLAYING"'));
   }
 
