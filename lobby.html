@@ -667,7 +667,8 @@
     const joinMessage = document.getElementById('joinMessage');
     const roomStorageKey = 'heroKillLocalRooms';
     const sessionStorageKey = 'heroKillRoomSession';
-    const maxPlayers = 4;
+    // 【临时测试配置】房间人数上限（正式为 4 人，测试期临时改为 2 人）。
+    const maxPlayers = 2;
     let toastTimer;
 
     const AI_MODEL_OPTIONS = {
@@ -794,21 +795,6 @@
       } while (rooms[roomCode]);
 
       return roomCode;
-    }
-
-    async function takeoverSeat(roomCode, nickname) {
-      try {
-        const response = await fetch(`/api/rooms/${roomCode}/takeover`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nickname })
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) return { ok: false, message: payload.message || '接管该席位失败，请稍后重试。' };
-        return { ok: true, playerId: payload.playerId, nickname: payload.nickname };
-      } catch {
-        return { ok: false, message: '网络异常，接管该席位失败。' };
-      }
     }
 
     function playSound() {
@@ -938,19 +924,9 @@
         return;
       }
 
-      // 对局进行中的房间：尝试接管离线玩家留下的空缺席位，而不是作为新玩家加入。
+      // 对局进行中的房间不再支持中途加入/接管（避免多开乱入与断线重连的卡顿）。
       if (room.phase === 'PLAYING') {
-        const takeover = await takeoverSeat(roomCode, nickname);
-        if (takeover.ok) {
-          const nextSession = JSON.stringify({ roomCode, playerId: takeover.playerId });
-          sessionStorage.setItem(sessionStorageKey, nextSession);
-          localStorage.setItem(sessionStorageKey, nextSession);
-          document.getElementById('joinDialog').close();
-          showToast('已接管对局空缺席位，正在返回对局。');
-          setTimeout(() => { window.location.href = 'game.html'; }, 420);
-          return;
-        }
-        showJoinMessage(takeover.message || '该房间没有空缺席位可以接管。');
+        showJoinMessage('该房间对局已在进行中，无法中途加入。');
         return;
       }
 

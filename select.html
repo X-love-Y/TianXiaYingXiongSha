@@ -219,10 +219,6 @@
     } catch {
       roomSession = null;
     }
-    if (roomSession?.roomCode && roomSession?.playerId && window.HeroKillNet) {
-      setInterval(() => window.HeroKillNet.heartbeat(roomSession.roomCode, roomSession.playerId), 10000);
-    }
-
     function getRooms() {
       try {
         return JSON.parse(localStorage.getItem(roomStorageKey)) || {};
@@ -266,6 +262,8 @@
       }
 
       function renderCards() {
+        cardsEl.style.gridTemplateColumns = `repeat(${Math.max(1, myHeroes.length)}, minmax(0, 1fr))`;
+        document.getElementById('select-title').textContent = `从随机分发的 ${myHeroes.length} 张英雄卡中选将`;
         cardsEl.innerHTML = myHeroes.map((hero, index) => {
           const isMain = hero.id === mainHeroId;
           const isSecondary = hero.id === secondaryHeroId;

@@ -477,7 +477,7 @@
 
     <footer class="footer">
       <span>AI 生成 · 服务端规则校验</span>
-      <span>测试阶段 · 每名玩家 5 张英雄卡</span>
+      <span id="cardCountHint">测试阶段 · 每名玩家 5 张英雄卡</span>
     </footer>
   </div>
 
@@ -488,7 +488,8 @@
   <script>
     const roomStorageKey = 'heroKillLocalRooms';
     const sessionStorageKey = 'heroKillRoomSession';
-    const cardCount = 5;
+    // 【临时测试配置】每名玩家定制的英雄卡数量（正式为 5，测试期改为 3）。
+    const cardCount = 3;
     let roomSession;
 
     try {
@@ -496,10 +497,6 @@
     } catch {
       roomSession = null;
     }
-    if (roomSession?.roomCode && roomSession?.playerId && window.HeroKillNet) {
-      setInterval(() => window.HeroKillNet.heartbeat(roomSession.roomCode, roomSession.playerId), 10000);
-    }
-
     function getRooms() {
       try {
         return JSON.parse(localStorage.getItem(roomStorageKey)) || {};
@@ -624,6 +621,8 @@
         const savedCards = room.customizations?.[roomSession.playerId]?.cards || [];
         document.getElementById('roomCode').textContent = roomSession.roomCode;
         document.getElementById('connectionText').textContent = `${player.nickname} · 卡牌定制`;
+        document.getElementById('cardCountHint').textContent = `测试阶段 · 每名玩家 ${cardCount} 张英雄卡`;
+        cardsEl.style.gridTemplateColumns = `repeat(${cardCount}, minmax(0, 1fr))`;
 
         function showGenerating(completed, total) {
           customizeForm.hidden = true;
@@ -719,17 +718,17 @@
           }
           if (roomSnapshot.phase === 'REVIEWING' || roomSnapshot.heroGeneration?.status === 'READY') {
             const myHeroes = roomSnapshot.generatedHeroes?.[roomSession.playerId];
-            if (Array.isArray(myHeroes) && myHeroes.length === 5) {
+            if (Array.isArray(myHeroes) && myHeroes.length === cardCount) {
               hideGenerating();
               cardsEl.innerHTML = renderReviewCards(myHeroes);
               const selfConfirmed = Boolean(roomSnapshot.confirmations?.[roomSession.playerId]);
               if (selfConfirmed) {
-                hintEl.textContent = '你已确认这 5 张英雄卡，等待其他玩家确认后进入选将。';
+                hintEl.textContent = `你已确认这 ${cardCount} 张英雄卡，等待其他玩家确认后进入选将。`;
                 submitButton.disabled = true;
                 submitButton.textContent = '已确认';
                 submitButton.onclick = null;
               } else {
-                hintEl.textContent = `${player.nickname}，请确认 AI 为你制作的 5 张英雄卡；确认后系统将洗乱全部 20 张随机分发。`;
+                hintEl.textContent = `${player.nickname}，请确认 AI 为你制作的 ${cardCount} 张英雄卡；确认后系统将洗乱全部 ${roomSnapshot.players.length * cardCount} 张随机分发。`;
                 submitButton.disabled = false;
                 submitButton.textContent = '确认英雄';
                 submitButton.onclick = confirmHeroes;
@@ -769,7 +768,7 @@
             submitButton.disabled = true;
             submitButton.textContent = '等待其他玩家';
           } else {
-            hintEl.textContent = `已有 ${submittedCount}/${roomSnapshot.players.length} 名玩家提交，请完成你的 5 张英雄卡。`;
+            hintEl.textContent = `已有 ${submittedCount}/${roomSnapshot.players.length} 名玩家提交，请完成你的 ${cardCount} 张英雄卡。`;
             submitButton.disabled = false;
             submitButton.textContent = '提交定制';
           }
@@ -781,7 +780,7 @@
 
         if (room.phase === 'PLAYING' && (room.finalHeroes || allHeroesReady(room))) enterGame();
         else if (room.phase === 'SELECTING') enterSelect();
-        else if (room.phase === 'REVIEWING' && Array.isArray(room.generatedHeroes?.[roomSession.playerId]) && room.generatedHeroes[roomSession.playerId].length === 5) reflectRoomProgress(room);
+        else if (room.phase === 'REVIEWING' && Array.isArray(room.generatedHeroes?.[roomSession.playerId]) && room.generatedHeroes[roomSession.playerId].length === cardCount) reflectRoomProgress(room);
         else {
           renderForm();
           reflectRoomProgress(room);

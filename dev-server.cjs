@@ -36,6 +36,8 @@ function normalizeRoom(room, roomCode) {
   if (!nextRoom.roomCode) return null;
   if (!nextRoom.createdAt) nextRoom.createdAt = Date.now();
   if (typeof nextRoom.updatedAt !== 'number') nextRoom.updatedAt = nextRoom.createdAt;
+  if (typeof nextRoom.lastActivityAt !== 'number') nextRoom.lastActivityAt = nextRoom.updatedAt;
+  if (typeof nextRoom.paused !== 'boolean') nextRoom.paused = Boolean(nextRoom.paused);
   if (typeof nextRoom.revision !== 'number') nextRoom.revision = 0;
   if (typeof nextRoom.schemaVersion !== 'number') nextRoom.schemaVersion = 1;
   return nextRoom;
@@ -50,38 +52,19 @@ function normalizeRooms(inputRooms) {
   return nextRooms;
 }
 
-// 玩家离线判定：超过 OFFLINE_MS 未上报心跳即视为离线；未知状态（刚加入）默认在线。
-// 90 秒较高阈值：浏览器把后台页面的定时器节流到约每分钟一次，阈值太短会把“切到后台”的玩家误判为离线。
-const OFFLINE_MS = 90000;
-// 房主断线保留时间：超过该时长仍未恢复，房主身份转移给最早加入且在线的玩家（策划 §2.5）。
-const HOST_TRANSFER_MS = 60 * 1000;
-function isPlayerOffline(room, playerId) {
-  const player = room?.players?.find((item) => item.id === playerId);
-  if (!player) return true;
-  if (typeof player.lastSeen !== 'number') return false;
-  return Date.now() - player.lastSeen > OFFLINE_MS;
-}
+// 房间“空置”判定：依据玩家“最后一次操作”（如点击界面、出牌、提交英雄等，即 lastActivityAt），
+// 连续 ROOM_IDLE_MS（默认 15 分钟）没有任何操作即判定为空房间并销毁。
+// 进行中的对局会自动改写 updatedAt，但只有玩家操作才会改写 lastActivityAt，因此不会因 AI 自动推进而误判为空。
+// 可通过环境变量 WEB_AI_GAME_ROOM_IDLE_MS 调整（毫秒），默认 15 分钟，最低 1 分钟。
+const ROOM_IDLE_MS = Math.max(60 * 1000, Number(process.env.WEB_AI_GAME_ROOM_IDLE_MS) || 15 * 60 * 1000);
 
-// 房主断线超时转移：当前房主离线超过 HOST_TRANSFER_MS 时，
-// 将房主身份交给“最早加入且在线的玩家”（按 players 数组顺序，越早加入越靠前）。
-function maybeTransferHost(room) {
-  if (!room || !Array.isArray(room.players) || room.players.length < 2) return false;
-  if (room.phase === 'ENDED' || room.phase === 'DISBANDED') return false;
-  const host = room.players.find((player) => player.role === 'host');
-  if (!host) return false;
-  // 房主单独使用 60 秒保留窗口（策划 §2.5）；普通在线检测仍为 OFFLINE_MS（90 秒）。
-  const hostLastSeen = host.lastSeen || room.createdAt || 0;
-  const hostGoneMs = Date.now() - hostLastSeen;
-  if (hostGoneMs <= HOST_TRANSFER_MS) return false;
-  // 候选：最早加入（数组靠前）、在线、且不是当前房主。
-  const candidate = room.players.find((player) => player.id !== host.id && !isPlayerOffline(room, player.id));
-  if (!candidate) return false;
-  host.role = 'guest';
-  candidate.role = 'host';
-  touchRoom(room);
-  scheduleBroadcast();
-  return true;
-}
+// 玩家“在线/离线”心跳超时：客户端按固定间隔上报 presence，连续超过该时长未上报即判定离线。
+// 所有玩家都离线时房间也会被销毁（暂停中除外）。
+const OFFLINE_TIMEOUT_MS = Math.max(15 * 1000, Number(process.env.WEB_AI_GAME_OFFLINE_MS) || 90 * 1000);
+
+// 【临时测试配置】每名玩家定制的英雄卡数量。正式规则为 5 张，测试期临时改为 3 张。
+// 若需恢复正式玩法：把 CARD_COUNT 改回 5，并同步 customize.html 的 cardCount。
+const CARD_COUNT = 3;
 
 // 对外广播/响应时隐藏房主填写的 API Key，服务器内存里保留完整配置用于 AI 生成。
 function sanitizeRoomsForClient(sourceRooms) {
@@ -96,7 +79,7 @@ function sanitizeRoomsForClient(sourceRooms) {
     if (Array.isArray(room.players)) {
       room.players = room.players.map((player) => {
         const { lastSeen, takenOver, ...rest } = player;
-        return { ...rest, online: !isPlayerOffline(room, player.id) };
+        return rest;
       });
     }
   });
@@ -291,7 +274,7 @@ function applyRoomChanges(changes, knownRevisions = {}, actorPlayerId = null) {
       conflicts.push({ roomCode, reason: 'invalid-room' });
       return;
     }
-    // 对局已开始的房间不允许再直接添加玩家（应由 takeover 接管空缺席位）。
+    // 对局已开始的房间不允许再直接添加玩家（已不再支持接管，避免中途乱入）。
     if (currentRoom?.phase === 'PLAYING' && Array.isArray(normalized?.players) && normalized.players.length > (currentRoom.players?.length || 0)) {
       conflicts.push({ roomCode, reason: 'game-action-not-authorized' });
       return;
@@ -304,6 +287,15 @@ function applyRoomChanges(changes, knownRevisions = {}, actorPlayerId = null) {
 
     normalized.revision = currentRevision + 1;
     normalized.updatedAt = now;
+    // 任何玩家对房间做出的真实修改（创建/加入/准备/改配置等）都算一次“操作”，刷新空置判定。
+    normalized.lastActivityAt = now;
+    if (actorPlayerId) {
+      const actor = (normalized.players || []).find((player) => player.id === String(actorPlayerId));
+      if (actor) {
+        actor.online = true;
+        actor.lastSeen = now;
+      }
+    }
     if (!normalized.createdAt) normalized.createdAt = currentRoom?.createdAt || now;
     nextRooms[roomCode] = normalized;
   });
@@ -344,10 +336,70 @@ function cleanupRooms() {
   if (changed) scheduleBroadcast();
 }
 
+// 房间是否已空置：连续 ROOM_IDLE_MS（默认 5 分钟）没有任何操作（无加入/提交/出牌等状态变更）。
+// 进行中的对局会持续改写 updatedAt，因此不会被误删；真正空置/挂机到结束的对局才会被回收。
+function roomIdle(room, now) {
+  const lastActivity = room?.lastActivityAt || room?.updatedAt || room?.createdAt;
+  return Boolean(lastActivity && now - lastActivity >= ROOM_IDLE_MS);
+}
+
+// 玩家在线判定：房间内所有玩家都已离线且确实存在过在线状态，则视为“全离线”，应销毁房间。
+function allPlayersOffline(room) {
+  const players = room?.players || [];
+  return players.length > 0 && players.every((player) => player.online === false);
+}
+
+// 将心跳超时的玩家标记为离线（仅在已建立过在线状态后才会被置为离线，避免刚加入的玩家被误判）。
+function markOfflinePlayers(room, now) {
+  if (!room || !Array.isArray(room.players)) return false;
+  let changed = false;
+  room.players.forEach((player) => {
+    if (player.online !== true) return;
+    const lastSeen = player.lastSeen || 0;
+    if (lastSeen && now - lastSeen >= OFFLINE_TIMEOUT_MS) {
+      player.online = false;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+// 销毁一个房间及其服务器权威对局引擎：从内存删除房间与 GameSession，并落盘移除，
+// 这样服务重启后旧对局不会“复活”。前端会通过广播实时看到房间消失。
+function destroyRoom(roomCode) {
+  if (!rooms[roomCode]) return;
+  roomSessions.delete(roomCode);   // 释放服务器权威对局引擎（推进循环随之停止）
+  delete rooms[roomCode];          // 移除房间，客户端广播后即不再可见
+  scheduleBroadcast();
+  schedulePersistRooms();          // 落盘删除，服务重启后旧对局不会“复活”
+  console.log(`[room-sweep] destroyed idle room ${roomCode}`);
+}
+
+let lastIdleSweepAt = 0;
+// 空置/离线房间回收：每 10 秒扫一次。优先标记心跳超时的玩家为离线；
+// 全离线（所有人掉线）或真正空置（连续 15 分钟没有任何玩家操作）即销毁房间。
+// 暂停中的房间不做任何计时、也不销毁。
+function sweepIdleRooms() {
+  const now = Date.now();
+  if (now - lastIdleSweepAt < 10 * 1000) return;
+  lastIdleSweepAt = now;
+  let offlineMarked = false;
+  Object.keys(rooms).forEach((roomCode) => {
+    const room = rooms[roomCode];
+    if (!room || room.phase === 'DISBANDED') return;
+    if (room.heroGeneration?.status === 'RUNNING') return;
+    if (room.paused) return;                                  // 暂停期间保留房间，不计时、不销毁
+    if (markOfflinePlayers(room, now)) offlineMarked = true;
+    if (allPlayersOffline(room)) { destroyRoom(roomCode); return; }
+    if (roomIdle(room, now)) destroyRoom(roomCode);
+  });
+  if (offlineMarked) scheduleBroadcast();
+}
+
 function allPlayersSubmitted(room) {
   return Boolean(room?.players?.length) && room.players.every((player) => {
     const cards = room.customizations?.[player.id]?.cards;
-    return Array.isArray(cards) && cards.length === 5 && cards.every((card) => card?.name && card?.description);
+    return Array.isArray(cards) && cards.length === CARD_COUNT && cards.every((card) => card?.name && card?.description);
   });
 }
 
@@ -390,6 +442,10 @@ function applyRoomAction(response, roomCode, session, payload, room) {
     sendJson(response, 403, { ok: false, message: '玩家不属于该房间。' });
     return;
   }
+  if (room.paused) {
+    sendJson(response, 409, { ok: false, message: '对局已暂停，无法进行操作。' });
+    return;
+  }
   if (!session.canAct(playerId)) {
     sendJson(response, 409, { ok: false, message: '当前不能执行该操作（未轮到你，或未到响应/濒死阶段）。' });
     return;
@@ -400,6 +456,7 @@ function applyRoomAction(response, roomCode, session, payload, room) {
   session.lastFingerprint = gameFingerprint(snapshot);
   room.revision = (room.revision || 0) + 1;
   room.updatedAt = Date.now();
+  markPlayerActivity(room, playerId);
   scheduleBroadcast();
   sendJson(response, 200, { ok: true, room, game: snapshot, playerId });
 }
@@ -407,6 +464,20 @@ function applyRoomAction(response, roomCode, session, payload, room) {
 function touchRoom(room) {
   room.revision = (room.revision || 0) + 1;
   room.updatedAt = Date.now();
+}
+
+// 标记一次“玩家操作”：刷新房间的最后活动时间，并同步该玩家的在线状态与最近心跳。
+// 只有玩家点击/提交/出牌等真实操作才调用，定时心跳（presence）不经过这里，避免把“在线”误当“活跃”。
+function markPlayerActivity(room, playerId) {
+  if (!room) return;
+  room.lastActivityAt = Date.now();
+  if (playerId && Array.isArray(room.players)) {
+    const player = room.players.find((item) => item.id === String(playerId));
+    if (player) {
+      player.online = true;
+      player.lastSeen = Date.now();
+    }
+  }
 }
 
 async function generateRoomHeroes(roomCode) {
@@ -419,7 +490,7 @@ async function generateRoomHeroes(roomCode) {
       status: 'RUNNING',
       startedAt: Date.now(),
       completedCount: 0,
-      totalCount: room.players.length * 5
+      totalCount: room.players.length * CARD_COUNT
     };
     touchRoom(room);
     scheduleBroadcast();
@@ -429,14 +500,14 @@ async function generateRoomHeroes(roomCode) {
     const llmEnabled = Boolean(process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
     const allCards = [];
     room.players.forEach((player) => {
-      (room.customizations[player.id]?.cards || []).slice(0, 5).forEach((card) => {
+      (room.customizations[player.id]?.cards || []).slice(0, CARD_COUNT).forEach((card) => {
         allCards.push({ playerId: player.id, name: card.name, description: card.description });
       });
     });
     const skillPlan = llmEnabled
       ? null
       : planFallbackSkills(allCards);
-    const generatedByPlayer = {};
+    let generatedByPlayer = {};
     for (let index = 0; index < allCards.length; index += 1) {
       const card = allCards[index];
       const planned = skillPlan?.get(index);
@@ -526,67 +597,6 @@ async function handleApi(request, response, requestPath) {
     return true;
   }
 
-  const heartbeatMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/heartbeat$/);
-  if (request.method === 'POST' && heartbeatMatch) {
-    const roomCode = heartbeatMatch[1];
-    const payload = await readJson(request);
-    const room = rooms[roomCode];
-    const player = room?.players?.find((item) => item.id === payload?.playerId);
-    if (!room || !player) {
-      sendJson(response, 404, { ok: false, message: '房间或玩家不存在。' });
-      return true;
-    }
-    player.lastSeen = Date.now();
-    scheduleBroadcast();
-    sendJson(response, 200, { ok: true });
-    return true;
-  }
-
-  const takeoverMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/takeover$/);
-  if (request.method === 'POST' && takeoverMatch) {
-    try {
-      const roomCode = takeoverMatch[1];
-      const payload = await readJson(request);
-      const room = rooms[roomCode];
-      if (!room) {
-        sendJson(response, 404, { ok: false, message: '房间不存在或已失效。' });
-        return true;
-      }
-      if (room.phase !== 'PLAYING') {
-        sendJson(response, 409, { ok: false, message: '该房间尚未开始对局，请直接加入。' });
-        return true;
-      }
-      const nickname = String(payload?.nickname || '').trim().slice(0, 12);
-      // 优先接管第一个离线席位：保持同一 playerId（英雄/手牌/位置不变），只更新昵称与在线状态。
-      const offline = room.players.find((player) => isPlayerOffline(room, player.id));
-      if (!offline) {
-        sendJson(response, 409, { ok: false, message: '该房间没有空缺席位可以接管。' });
-        return true;
-      }
-      offline.lastSeen = Date.now();
-      offline.takenOver = true;
-      if (nickname) offline.nickname = nickname;
-      // 同步对局引擎中的昵称，让客户端界面/日志展示接管人昵称。
-      const session = roomSessions.get(roomCode);
-      if (session) {
-        try {
-          session.eval(`(() => { const p = gameState.players.find((x) => x.id === ${JSON.stringify(offline.id)}); if (p) p.nickname = ${JSON.stringify(offline.nickname)}; })();`);
-        } catch (error) {
-          console.error(`Takeover nickname sync failed for ${roomCode}:`, error);
-        }
-        room.game = session.snapshot();
-        room.revision = (room.revision || 0) + 1;
-        room.updatedAt = Date.now();
-      }
-      scheduleBroadcast();
-      sendJson(response, 200, { ok: true, roomCode, playerId: offline.id, nickname: offline.nickname, room });
-      return true;
-    } catch {
-      sendJson(response, 400, { ok: false, message: '无法接管该席位，请稍后重试。' });
-      return true;
-    }
-  }
-
   if (request.method === 'POST' && requestPath === '/api/ai/test') {
     try {
       const payload = await readJson(request);
@@ -642,9 +652,9 @@ async function handleApi(request, response, requestPath) {
         sendJson(response, 409, { ok: false, message: '本局英雄已经生成。', room });
         return true;
       }
-      const rawCards = Array.isArray(payload.cards) ? payload.cards.slice(0, 5) : [];
-      if (rawCards.length !== 5) {
-        sendJson(response, 400, { ok: false, message: '请填写 5 张英雄卡。' });
+      const rawCards = Array.isArray(payload.cards) ? payload.cards.slice(0, CARD_COUNT) : [];
+      if (rawCards.length !== CARD_COUNT) {
+        sendJson(response, 400, { ok: false, message: `请填写 ${CARD_COUNT} 张英雄卡。` });
         return true;
       }
       const cards = rawCards.map((card) => {
@@ -670,6 +680,7 @@ async function handleApi(request, response, requestPath) {
       room.heroGeneration = { status: 'WAITING' };
       room.phase = 'CUSTOMIZING';
       touchRoom(room);
+      markPlayerActivity(room, player.id);
       scheduleBroadcast();
       if (allPlayersSubmitted(room)) void generateRoomHeroes(roomCode);
       sendJson(response, 202, { ok: true, room, generationStarted: allPlayersSubmitted(room) });
@@ -697,6 +708,7 @@ async function handleApi(request, response, requestPath) {
       room.confirmations = room.confirmations || {};
       room.confirmations[player.id] = true;
       touchRoom(room);
+      markPlayerActivity(room, player.id);
       scheduleBroadcast();
       if (allConfirmed(room)) {
         // 洗乱 20 张英雄卡，随机分发每人 5 张，进入选将阶段。
@@ -705,7 +717,7 @@ async function handleApi(request, response, requestPath) {
         const shuffled = shuffleList(allHeroes);
         const dealtHands = {};
         room.players.forEach((roomPlayer, index) => {
-          dealtHands[roomPlayer.id] = shuffled.slice(index * 5, index * 5 + 5);
+          dealtHands[roomPlayer.id] = shuffled.slice(index * CARD_COUNT, index * CARD_COUNT + CARD_COUNT);
         });
         room.dealtHands = dealtHands;
         room.picks = {};
@@ -748,6 +760,7 @@ async function handleApi(request, response, requestPath) {
       room.picks = room.picks || {};
       room.picks[player.id] = { mainHeroId, secondaryHeroId };
       touchRoom(room);
+      markPlayerActivity(room, player.id);
       scheduleBroadcast();
       if (allPicked(room)) {
         const allHeroes = [];
@@ -883,6 +896,7 @@ async function handleApi(request, response, requestPath) {
         player.ready = player.role === 'host';
       });
       touchRoom(room);
+      markPlayerActivity(room, actor.id);
       scheduleBroadcast();
       sendJson(response, 200, { ok: true, room });
     } catch {
@@ -917,6 +931,93 @@ async function handleApi(request, response, requestPath) {
       sendJson(response, 200, { ok: true, roomCode });
     } catch {
       sendJson(response, 400, { ok: false, message: '无法读取解散房间数据。' });
+    }
+    return true;
+  }
+
+  // 在线心跳：客户端定期上报，仅刷新玩家 lastSeen/online，不改变 lastActivityAt / revision。
+  // 这样“在线”与“活跃（有操作）”分开判定：在线不等于在 15 分钟内有操作。
+  const presenceMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/presence$/);
+  if (request.method === 'POST' && presenceMatch) {
+    try {
+      const roomCode = presenceMatch[1];
+      const payload = await readJson(request);
+      const room = rooms[roomCode];
+      const player = room?.players?.find((item) => item.id === payload.playerId);
+      if (!room || !player) {
+        sendJson(response, 404, { ok: false, message: '房间或玩家不存在。' });
+        return true;
+      }
+      const firstSeen = player.online !== true;
+      player.online = true;
+      player.lastSeen = Date.now();
+      if (firstSeen) scheduleBroadcast();   // 仅在上线状态变化时广播，避免心跳高频刷屏
+      sendJson(response, 200, { ok: true });
+    } catch {
+      sendJson(response, 400, { ok: false, message: '无效的心跳请求。' });
+    }
+    return true;
+  }
+
+  // 房主暂停/继续对局：暂停时冻结对局推进与 15 分钟空置计时，房间不会被销毁。
+  const pauseMatch = requestPath.match(/^\/api\/rooms\/(\d{6})\/pause$/);
+  if (request.method === 'POST' && pauseMatch) {
+    try {
+      const roomCode = pauseMatch[1];
+      const payload = await readJson(request);
+      const room = rooms[roomCode];
+      if (!room) {
+        sendJson(response, 404, { ok: false, message: '房间不存在或已失效。' });
+        return true;
+      }
+      const actor = room.players?.find((player) => player.id === payload.playerId);
+      if (!actor) {
+        sendJson(response, 403, { ok: false, message: '玩家不属于该房间。' });
+        return true;
+      }
+      if (actor.role !== 'host') {
+        sendJson(response, 409, { ok: false, message: '只有房主可以暂停或继续对局。' });
+        return true;
+      }
+      if (room.phase !== 'PLAYING') {
+        sendJson(response, 409, { ok: false, message: '当前不在对局阶段。' });
+        return true;
+      }
+      const shouldPause = Boolean(payload.paused);
+      const session = roomSessions.get(roomCode);
+      if (shouldPause) {
+        room.paused = true;
+        room.pausedAt = Date.now();
+      } else {
+        const pausedDuration = Date.now() - (room.pausedAt || Date.now());
+        // 恢复对局：把“最后操作时间”顺延暂停时长，等效于暂停期间没有进行空置计时，房间不销毁。
+        room.lastActivityAt = (room.lastActivityAt || room.updatedAt || Date.now()) + pausedDuration;
+        room.paused = false;
+        delete room.pausedAt;
+        if (session && typeof session.advancePausedTime === 'function') {
+          session.advancePausedTime(pausedDuration);
+          // 立即刷新 room.game，让客户端看到“顺延后”的倒计时；同时保持指纹不变，避免重复推进。
+          const snapshot = session.snapshot();
+          room.game = snapshot;
+          session.lastFingerprint = gameFingerprint(snapshot);
+        } else if (!session) {
+          // 恢复时若权威会话缺失（例如暂停期间服务重启），补建会话并复用 room.game 快照继续对局。
+          ['turnDeadline', 'drawDeadline', 'responseDeadline', 'matchDeadline', 'turnStartedAt', 'matchStartedAt', 'selectDeadline']
+            .forEach((key) => { if (room.game && typeof room.game[key] === 'number') room.game[key] += pausedDuration; });
+          const created = createSession(room);
+          roomSessions.set(roomCode, created);
+          room.game = created.snapshot();
+          created.lastFingerprint = gameFingerprint(room.game);
+        }
+      }
+      // 暂停/继续本身也是在线操作：刷新房主在线心跳，但不要重置空置基准（保持暂停计时冻结）。
+      actor.online = true;
+      actor.lastSeen = Date.now();
+      touchRoom(room);
+      scheduleBroadcast();
+      sendJson(response, 200, { ok: true, room });
+    } catch {
+      sendJson(response, 400, { ok: false, message: '无法处理暂停操作。' });
     }
     return true;
   }
@@ -976,8 +1077,9 @@ function serverGameLoop() {
       roomSessions.delete(roomCode);
       return;
     }
+    if (room.paused) return;   // 暂停：冻结对局推进，不计时、不广播、不销毁
     try {
-      session.pumpTimers(Date.now());
+      session.pumpTimers();
       session.tick();
       const snapshot = session.snapshot();
       // 对局在服务端引擎里已经结算（ENDED）：把房间状态也切到 ENDED，
@@ -1006,7 +1108,7 @@ function serverGameLoop() {
   // 避免个别客户端因时序错过创建而一直停在“等待对局状态”。
   Object.keys(rooms).forEach((roomCode) => {
     const room = rooms[roomCode];
-    if (room?.phase !== 'PLAYING' || room.game || roomSessions.has(roomCode)) return;
+    if (room?.phase !== 'PLAYING' || room.paused || room.game || roomSessions.has(roomCode)) return;
     try {
       const session = createSession(room);
       roomSessions.set(roomCode, session);
@@ -1019,26 +1121,31 @@ function serverGameLoop() {
       console.error(`Room ${roomCode} authoritative session backfill failed:`, error);
     }
   });
-  // 房主断线超时转移：对所有非结束房间做一次检测（低频，几乎无开销）。
-  Object.keys(rooms).forEach((roomCode) => {
-    const room = rooms[roomCode];
-    if (!room || room.phase === 'ENDED' || room.phase === 'DISBANDED') return;
-    if (maybeTransferHost(room)) {
-      // 已通过 touchRoom/scheduleBroadcast 同步。
-    }
-  });
+  // 空置/离线房间回收：连续 15 分钟没有任何玩家操作，或全员离线，即销毁房间（暂停中除外）。
+  sweepIdleRooms();
 }
 
 http.createServer(async (request, response) => {
-  const requestPath = decodeURIComponent(request.url.split('?')[0]);
+  try {
+    const requestPath = decodeURIComponent(request.url.split('?')[0]);
 
-  if (requestPath.startsWith('/api/')) {
-    const handled = await handleApi(request, response, requestPath);
-    if (!handled) sendJson(response, 404, { ok: false, message: 'API route not found' });
-    return;
+    if (requestPath.startsWith('/api/')) {
+      const handled = await handleApi(request, response, requestPath);
+      if (!handled) sendJson(response, 404, { ok: false, message: 'API route not found' });
+      return;
+    }
+
+    serveFile(response, requestPath);
+  } catch (error) {
+    // 任何一个请求处理抛错都不再让整个进程退出，否则一个坏请求就会导致 systemd 崩溃循环，
+    // 全站点击无响应。这里记录日志并尽量返回 500。
+    console.error('[webaigame] Unhandled request error:', error);
+    try {
+      if (!response.headersSent) sendJson(response, 500, { ok: false, message: '服务器内部错误，请稍后重试。' });
+    } catch (_) {
+      // 连接可能已被关闭（如超大 body 的 request.destroy()），忽略写响应失败。
+    }
   }
-
-  serveFile(response, requestPath);
 }).listen(port, host, () => {
   console.log(`天下英雄杀 prototype server: http://127.0.0.1:${port}/`);
   console.log(`Room sync API enabled: http://127.0.0.1:${port}/api/rooms`);
@@ -1057,3 +1164,12 @@ function shutdownGracefully() {
 }
 process.on('SIGTERM', shutdownGracefully);
 process.on('SIGINT', shutdownGracefully);
+
+// 安全网：万一还有未捕获的 rejection / 异常，不再让进程直接退出（否则整台服务器反复崩溃）。
+// 游戏状态每晚 800ms 落盘，尽量保留进程继续服务，仅记录错误便于排查。
+process.on('unhandledRejection', (reason) => {
+  console.error('[webaigame] Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (error) => {
+  console.error('[webaigame] Uncaught exception (server kept running):', error);
+});

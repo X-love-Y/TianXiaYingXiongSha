@@ -457,7 +457,7 @@
             <p class="eyebrow">等待其他玩家加入</p>
             <h1 id="waiting-title">房间等待大厅</h1>
           </div>
-          <p class="player-count"><strong id="playerCount">1</strong>/ 4 位玩家</p>
+          <p class="player-count"><strong id="playerCount">1</strong><span id="playerCountHint">/ 4 位玩家</span></p>
         </div>
 
         <div class="seats" id="seats"></div>
@@ -523,7 +523,8 @@
   <script>
     const roomStorageKey = 'heroKillLocalRooms';
     const sessionStorageKey = 'heroKillRoomSession';
-    const maxPlayers = 4;
+    // 【临时测试配置】房间人数上限（正式为 4 人，测试期临时改为 2 人）。
+    const maxPlayers = 2;
     let roomSession;
 
     try {
@@ -531,10 +532,6 @@
     } catch {
       roomSession = null;
     }
-    if (roomSession?.roomCode && roomSession?.playerId && window.HeroKillNet) {
-      setInterval(() => window.HeroKillNet.heartbeat(roomSession.roomCode, roomSession.playerId), 10000);
-    }
-
     function getRooms() {
       try {
         return JSON.parse(localStorage.getItem(roomStorageKey)) || {};
@@ -633,6 +630,7 @@
 
         document.getElementById('roomCode').textContent = roomData.roomCode;
         document.getElementById('playerCount').textContent = roomData.players.length;
+        document.getElementById('playerCountHint').textContent = `/ ${maxPlayers} 位玩家`;
         document.getElementById('connectionText').textContent = isHost ? '本地房间 · 房主' : '本地房间 · 已加入';
         document.getElementById('spectatingText').textContent = roomData.spectating ? '是' : '否';
         document.getElementById('modeText').textContent = roomData.mode === 'timed'
@@ -676,12 +674,37 @@
       });
 
       document.getElementById('copyButton').addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(roomSession.roomCode);
-          showToast(`房间号 ${roomSession.roomCode} 已复制。`);
-        } catch {
-          showToast(`房间号：${roomSession.roomCode}`);
+        const code = roomSession.roomCode;
+        // 兼容：非安全上下文（HTTP 非 localhost）下 navigator.clipboard 可能不存在，或写入被拒，
+        // 回退到隐藏 textarea + execCommand('copy')，保证房间码一定能写进剪贴板。
+        const legacyCopy = () => {
+          const textarea = document.createElement('textarea');
+          textarea.value = code;
+          textarea.setAttribute('readonly', '');
+          textarea.style.position = 'fixed';
+          textarea.style.left = '-9999px';
+          textarea.style.top = '0';
+          document.body.appendChild(textarea);
+          textarea.select();
+          textarea.setSelectionRange(0, textarea.value.length);
+          let ok = false;
+          try { ok = document.execCommand('copy'); } catch { ok = false; }
+          document.body.removeChild(textarea);
+          return ok;
+        };
+        let ok = false;
+        if (navigator.clipboard && window.isSecureContext) {
+          try {
+            await navigator.clipboard.writeText(code);
+            ok = true;
+          } catch {
+            ok = legacyCopy();
+          }
+        } else {
+          ok = legacyCopy();
         }
+        if (ok) showToast(`房间号 ${code} 已复制。`);
+        else showToast(`复制失败，房间号：${code}`);
       });
 
       primaryButton.addEventListener('click', () => {

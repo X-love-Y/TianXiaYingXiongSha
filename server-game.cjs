@@ -169,6 +169,9 @@ class GameSession {
     const playerId = String(event?.playerId || '');
     this._setSelection(event);
     const ev = this.eval;
+    // 记录“本回合已操作”，用于区分“慢但活跃”与“完全离线”：
+    // 只有当前玩家在主动回合（出牌/弃牌）里发来操作才算有效活动，避免被回合超时误判离线。
+    ev(`if (gameState && gameState.status === 'PLAYING' && gameState.currentPlayerId === ${q(playerId)} && (gameState.phase === 'PLAY' || gameState.phase === 'DISCARD')) gameState.turnActed = true;`);
 
     const commit = (call) => ev(call);
 
@@ -230,6 +233,19 @@ class GameSession {
       timers.items.delete(id);
       try { item.fn(); } catch (error) { console.error('pumpTimers error:', error); }
     });
+  }
+
+  // 暂停后恢复对局：把对局内所有倒计时/开始时间与回调定时器统一“顺延”暂停时长，
+  // 等效于暂停期间时间没有流逝，玩家仍拥有暂停前的剩余时间，客户端倒计时也能准确对齐。
+  advancePausedTime(ms) {
+    if (!(ms > 0) || !this.initialized) return;
+    this.eval(`(() => {
+      ['turnDeadline', 'drawDeadline', 'responseDeadline', 'matchDeadline', 'turnStartedAt', 'matchStartedAt', 'selectDeadline']
+        .forEach((key) => { if (typeof gameState[key] === 'number') gameState[key] += ${Number(ms) || 0}; });
+      return true;
+    })()`);
+    const { timers } = this.sandbox;
+    timers.items.forEach((item) => { item.at += (Number(ms) || 0); });
   }
 }
 

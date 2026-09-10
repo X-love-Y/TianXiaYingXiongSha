@@ -81,6 +81,18 @@
     .match-meta strong { color: var(--gold-light); font-family: Consolas, monospace; letter-spacing: 1px; }
     .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 11px rgba(123, 168, 152, .8); }
     .turn-pill { padding: 5px 10px; border: 1px solid rgba(217, 183, 109, .42); color: var(--gold-light); background: rgba(217, 183, 109, .08); border-radius: 3px; }
+    .pause-button {
+      padding: 5px 10px;
+      border: 1px solid rgba(217, 183, 109, .42);
+      color: var(--gold-light);
+      background: rgba(217, 183, 109, .08);
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .pause-button:hover:not(:disabled) { background: rgba(217, 183, 109, .16); }
+    .pause-button:disabled { cursor: not-allowed; opacity: .5; }
+    .pause-button.paused { color: #f0d18a; border-color: rgba(238, 132, 118, .62); background: rgba(109, 38, 34, .5); }
 
     .main { display: grid; align-content: center; padding: 20px 0 16px; }
     .notice {
@@ -405,6 +417,7 @@
         <span>房间</span><strong id="roomCode">------</strong>
         <span class="turn-pill" id="turnMeta">准备中</span>
         <span id="timerText">--</span>
+        <button class="pause-button" id="pauseButton" type="button" style="display:none">暂停</button>
       </div>
     </header>
 
@@ -528,11 +541,6 @@
 
     // 优先读会话、其次读本地持久化会话（离线重开浏览器也能回到对局）。
     try { roomSession = JSON.parse(sessionStorage.getItem(sessionStorageKey) || localStorage.getItem(sessionStorageKey)); } catch { roomSession = null; }
-    // 心跳上报：让服务器知道该玩家在线，用于检测离线并开放空缺席位接管。
-    if (roomSession?.roomCode && roomSession?.playerId && window.HeroKillNet) {
-      setInterval(() => window.HeroKillNet.heartbeat(roomSession.roomCode, roomSession.playerId), 10000);
-    }
-
     const $ = (id) => document.getElementById(id);
     const ui = {
       roomCode: $('roomCode'), turnMeta: $('turnMeta'), timerText: $('timerText'), notice: $('notice'),
@@ -544,7 +552,7 @@
       responsePanel: $('responsePanel'), responseTitle: $('responseTitle'), responseCopy: $('responseCopy'),
       takeDamage: $('takeDamage'), respondDodge: $('respondDodge'), doomButton: $('doomButton'), victory: $('victory'), victoryTitle: $('victoryTitle'), table: document.querySelector('.table'),
       victoryCopy: $('victoryCopy'), backLobby: $('backLobby'), rematchButton: $('rematchButton'), disbandButton: $('disbandButton'), sound: $('buttonSound'), turnDialog: $('turnDialog'),
-      turnDialogCopy: $('turnDialogCopy'), cancelTurnEnd: $('cancelTurnEnd'), discardThenPass: $('discardThenPass'), directPass: $('directPass')
+      turnDialogCopy: $('turnDialogCopy'), cancelTurnEnd: $('cancelTurnEnd'), discardThenPass: $('discardThenPass'), directPass: $('directPass'), pauseButton: $('pauseButton')
     };
 
     function getRooms() {
@@ -562,6 +570,7 @@
     }
     async function sendAction(type, extra = {}) {
       if (actionPending || !roomSession?.roomCode) return;
+      if (roomData?.paused) { if (ui.notice) ui.notice.textContent = '对局已暂停，无法进行操作。'; return; }
       actionPending = true;
       try {
         const body = {
@@ -863,6 +872,7 @@
         pendingAttack: null,
         pendingRescue: null,
         winnerId: null,
+        turnActed: false,
         deck: buildDeck(room),
         discardPile: [],
         actionLog: [],
@@ -1068,12 +1078,21 @@
         gameState.players[3] || null
       ];
       ui.roomCode.textContent = roomSession.roomCode;
+      const pauseableHost = Boolean(roomData?.players?.find((player) => player.role === 'host' && player.id === roomSession.playerId));
+      if (ui.pauseButton) {
+        const inPlaying = gameState.status === 'PLAYING';
+        ui.pauseButton.style.display = (inPlaying && pauseableHost) ? '' : 'none';
+        ui.pauseButton.textContent = roomData?.paused ? '继续' : '暂停';
+        ui.pauseButton.classList.toggle('paused', Boolean(roomData?.paused));
+      }
       ui.turnMeta.textContent = gameState.status === 'ENDED' ? '对局结束' : `第 ${gameState.round} 回合 · ${active?.nickname || '—'}`;
       ui.roundText.textContent = `第 ${gameState.round} 回合`;
       ui.phaseText.textContent = gameState.status === 'ENDED' ? '结算阶段' : gameState.phase === 'DRAWING' ? '摸牌阶段' : gameState.phase === 'RESPONSE' ? '响应阶段' : gameState.phase === 'DISCARD' ? '弃牌阶段' : '出牌阶段';
       if (gameState.phase === 'DYING') ui.phaseText.textContent = '濒死阶段';
+      if (roomData?.paused) ui.phaseText.textContent = '已暂停';
       ui.seats.forEach((seat, index) => {
         const player = arrangedPlayers[index];
+        seat.style.display = player ? '' : 'none';   // 2 人测试局：隐藏空座位
         const selectedKill = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'kill');
         const selectedSilence = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'silence');
         const selectedBan = currentPlayer.hand.some((card) => card.uid === selectedCardUid && card.type === 'ban');
@@ -1204,6 +1223,10 @@
       }
       ui.notice.textContent = gameState.status === 'ENDED' ? '对局已结算，可以返回大厅。' : gameState.phase === 'DRAWING' ? '摸牌中 · 2 秒后进入出牌阶段' : canRespond ? (respondingToSpell ? '请在响应时间内决定是否打出「无法选中」。' : '请在响应时间内决定是否打出闪。') : hasTurn() ? `你的回合：摸 ${gameState.drawCount || 2} 张牌后行动。` : `等待 ${active?.nickname || '对手'} 完成回合。`;
       if (canRescue) ui.notice.textContent = `濒死响应：使用奶可恢复 ${healAmountFor(currentPlayer)} 点生命。`;
+      if (roomData?.paused) {
+        ui.notice.textContent = '对局已暂停，计时与倒计时均已冻结。';
+        ui.notice.classList.remove('attention');
+      }
       ui.notice.classList.toggle('attention', gameState.phase === 'DRAWING' || canRespond || canRescue || discardMode);
       ui.responsePanel.classList.toggle('visible', canRespond || canRescue);
       if (respondingToSpell) {
@@ -2318,10 +2341,15 @@
     }
     function endTurn(actor = currentPlayer) { directPass(actor); }
     function handleEndTurnButton() {
-      if (SERVER_AUTH) { sendAction('pass'); return; }
       if (gameState.phase === 'DRAWING') return;
-      if (gameState.phase === 'DISCARD') directPass();
-      else requestEndTurn();
+      if (gameState.phase === 'DISCARD') {
+        // 弃牌阶段点“直接过（自动处理）”：直接结算剩余超额手牌并结束回合。
+        if (SERVER_AUTH) { sendAction('pass'); return; }
+        directPass();
+        return;
+      }
+      // 出牌阶段点“过 / 结束回合”：打开确认弹窗，允许“弃牌后过（手动选牌）”或“直接过”。
+      requestEndTurn();
     }
     function discardSelected() {
       if (SERVER_AUTH) { sendAction('discard'); return; }
@@ -2409,6 +2437,7 @@
       gameState.round += 1;
       gameState.phase = 'DRAWING';
       gameState.killUsed = false;
+      gameState.turnActed = false;
       gameState.skipPlayRound = 0;
       gameState.pendingSpell = null;
       gameState.turnStartedAt = Date.now();
@@ -2532,6 +2561,7 @@
     }
     function tick() {
       if (!gameState || gameState.status === 'ENDED') { ui.timerText.textContent = '--'; return; }
+      if (roomData?.paused) { ui.timerText.textContent = '已暂停'; return; }
       const deadline = gameState.phase === 'DRAWING' ? gameState.drawDeadline : (gameState.phase === 'RESPONSE' || gameState.phase === 'DYING') ? gameState.responseDeadline : gameState.turnDeadline;
       const hostPlayer = (roomData?.players || []).find((player) => player.role === 'host') || (roomData?.players || [])[0];
       const isHostClient = Boolean(hostPlayer && hostPlayer.id === roomSession.playerId);
@@ -2593,7 +2623,20 @@
           advanceSpellResolution();
         }
         else if (gameState.phase === 'DYING' && mayResolveRescue) resolveDying(false, true);
-        else if ((gameState.phase === 'PLAY' || gameState.phase === 'DISCARD') && mayResolveTurn) randomDiscardAndEnd(current());
+        else if ((gameState.phase === 'PLAY' || gameState.phase === 'DISCARD') && mayResolveTurn) {
+          const turnPlayer = current();
+          // 主动回合内没有任何操作直至超时：判定该玩家离线，直接死亡（不再仅自动过牌）。
+          if (turnPlayer && !turnPlayer.isDemo && gameState.turnActed === false) {
+            finishDefeat(null, turnPlayer, false);
+            addLog(`${turnPlayer.nickname} 回合内无任何操作，判定离线出局。`);
+            finishSurvivalMatchIfNeeded();
+            if (gameState.status === 'PLAYING') nextTurn();
+            persistGame();
+            render();
+            return;
+          }
+          randomDiscardAndEnd(current());
+        }
       }
       runDemoTurn();
     }
@@ -2676,6 +2719,36 @@
     }
     ui.rematchButton.addEventListener('click', () => { playSound(); callRoomCommand('rematch'); });
     ui.disbandButton.addEventListener('click', () => { playSound(); callRoomCommand('disband'); });
+
+    // 房主暂停/继续对局：暂停时服务端冻结对局推进与空置计时，房间保留不销毁。
+    async function sendPauseCommand(paused) {
+      if (!roomSession?.roomCode || !roomSession.playerId) return;
+      if (ui.pauseButton) ui.pauseButton.disabled = true;
+      try {
+        const response = await fetch(`/api/rooms/${roomSession.roomCode}/pause`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerId: roomSession.playerId, paused })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || `操作失败：${response.status}`);
+        if (payload.room) {
+          roomData = payload.room;
+          const rooms = getRooms();
+          rooms[roomSession.roomCode] = payload.room;
+          localStorage.setItem(roomStorageKey, JSON.stringify(rooms));
+        }
+        render();
+      } catch (error) {
+        if (ui.notice) ui.notice.textContent = error.message || '操作失败，请重试。';
+      } finally {
+        if (ui.pauseButton) ui.pauseButton.disabled = false;
+      }
+    }
+    ui.pauseButton.addEventListener('click', () => {
+      playSound();
+      sendPauseCommand(!roomData?.paused);
+    });
 
     function handleRemoteGameUpdate() {
       const latestRoom = getRooms()[roomSession.roomCode];

@@ -64,18 +64,6 @@
     }
   }
 
-  async function heartbeat(roomCode, playerId) {
-    if (!canUseNetwork() || !roomCode || !playerId) return;
-    try {
-      await request(`/api/rooms/${roomCode}/heartbeat`, {
-        method: 'POST',
-        body: JSON.stringify({ playerId })
-      });
-    } catch {
-      // 心跳失败可能是网络抖动/页面刚加载，静默忽略，下一次重试。
-    }
-  }
-
   function buildRoomChanges(rooms) {
     const currentRooms = rooms || {};
     const changes = {};
@@ -181,19 +169,45 @@
       }
     });
     events.onerror = () => {
+      // 不再自动重连：避免多开页面反复重建连接造成卡顿。
       connected = false;
       events.close();
-      setTimeout(connectRooms, 1200);
     };
+  }
+
+  let presenceTimer = null;
+  // 在线心跳：只要进入了某个房间（存在房间会话）就每 15 秒上报一次存在性，
+  // 服务器据此维护 player.online / lastSeen，用于“全员离线即销毁房间”。
+  // 注意：心跳只代表“在线”，不代表“有操作”，所以不会重置 15 分钟空置计时。
+  function startPresenceHeartbeat() {
+    if (presenceTimer || !canUseNetwork()) return;
+    let session = null;
+    try {
+      session = JSON.parse(sessionStorage.getItem('heroKillRoomSession') || localStorage.getItem('heroKillRoomSession'));
+    } catch {
+      session = null;
+    }
+    if (!session || !/^\d{6}$/.test(session.roomCode) || !session.playerId) return;
+    const beat = () => {
+      request(`/api/rooms/${session.roomCode}/presence`, {
+        method: 'POST',
+        body: JSON.stringify({ playerId: session.playerId })
+      }).catch(() => {});
+    };
+    beat();
+    presenceTimer = setInterval(beat, 15000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') beat();
+    });
   }
 
   window.HeroKillNet = {
     loadRooms,
     saveRooms,
     connectRooms,
-    readLocalRooms,
-    heartbeat
+    readLocalRooms
   };
 
   connectRooms();
+  startPresenceHeartbeat();
 })();
